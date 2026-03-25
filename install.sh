@@ -34,12 +34,12 @@ fi
 # --- 2. Install system dependencies ---
 echo "Installing system dependencies..."
 
-sudo apt update
-sudo apt install -y git curl avahi-daemon iptables iptables-persistent
+sudo apt-get update
+sudo apt-get install -y git curl avahi-daemon iptables iptables-persistent
 
 # Install modern Node.js
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt-get install -y nodejs
 
 # --- 3. Enable Avahi ---
 sudo systemctl enable avahi-daemon
