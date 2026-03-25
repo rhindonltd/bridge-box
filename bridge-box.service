@@ -1,0 +1,14 @@
+[Unit]
+Description=Bridge Scoring Box Startup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/bridge-box/startup.sh
+RemainAfterExit=yes
+User=pi
+WorkingDirectory=/home/pi
+
+[Install]
+WantedBy=multi-user.target
