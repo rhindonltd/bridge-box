@@ -1,6 +1,6 @@
 ```bash
 #!/bin/bash
-# install.sh — One-command installer for Bridge Box
+# install.sh — BridgeBox factory installer (atomic-ready)
 
 set -e
 
@@ -23,7 +23,9 @@ REPO_APP="https://github.com/rhindonltd/bridge-box-scorer.git"
 
 INSTALL_DIR="/home/bridgebox"
 BOX_DIR="$INSTALL_DIR/bridge-box"
-APP_DIR="$INSTALL_DIR/bridge-box-scorer"
+
+RELEASES_DIR="$INSTALL_DIR/bridge-box-scorer/releases"
+CURRENT_LINK="$INSTALL_DIR/bridge-box-scorer/current"
 
 # --- 1. Ensure running as bridgebox user ---
 if [ "$USER" != "bridgebox" ]; then
@@ -36,37 +38,56 @@ echo "Installing system dependencies..."
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get update
 
+# Pre-answer iptables-persistent
 echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
 echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git curl avahi-daemon iptables iptables-persistent
+  git curl avahi-daemon iptables iptables-persistent jq
 
-# Install modern Node.js
+# Install Node.js 22 LTS
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 
 # --- 3. Enable Avahi ---
 sudo systemctl enable avahi-daemon
 sudo systemctl restart avahi-daemon
 
-# --- 4. Clone repos ---
-echo "Cloning repositories..."
+# --- 4. Clone bridge-box scripts ---
+echo "Cloning bridge-box..."
 
 rm -rf "$BOX_DIR"
-rm -rf "$APP_DIR"
-
 git clone "$REPO_BOX" "$BOX_DIR"
-git clone "$REPO_APP" "$APP_DIR"
 
-# --- 5. Install PM2 ---
+# --- 5. Setup atomic app structure ---
+echo "Setting up application..."
+
+mkdir -p "$RELEASES_DIR"
+
+INITIAL_RELEASE="$RELEASES_DIR/app_initial"
+rm -rf "$INITIAL_RELEASE"
+
+git clone "$REPO_APP" "$INITIAL_RELEASE"
+
+cd "$INITIAL_RELEASE"
+
+echo "Installing app dependencies..."
+npm install
+
+echo "Building app..."
+npm run build
+
+# Create symlink to current
+ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
+
+# --- 6. Install PM2 ---
 if ! command -v pm2 &> /dev/null
 then
-    echo "Installing PM2..."
-    sudo npm install -g pm2
+  echo "Installing PM2..."
+  sudo npm install -g pm2
 fi
 
-# --- 6. Create hotspot ---
+# --- 7. Create hotspot ---
 echo "Creating hotspot configuration..."
 
 nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
@@ -83,11 +104,12 @@ nmcli connection modify "$CONNECTION_NAME" \
   connection.autoconnect yes \
   connection.autoconnect-priority 100
 
-# --- 7. Configure iptables ---
+# --- 8. Configure iptables ---
 echo "Configuring iptables..."
 
 sudo sysctl -w net.ipv4.ip_forward=1
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || \
+  echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
 
 sudo iptables -t nat -F
 sudo iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 80 -j REDIRECT --to-port $APP_PORT
@@ -95,7 +117,7 @@ sudo iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 443 -j REDIRECT --
 
 sudo netfilter-persistent save
 
-# --- 8. Install systemd service ---
+# --- 9. Install systemd service ---
 echo "Installing startup service..."
 
 sudo cp "$BOX_DIR/bridge-box.service" /etc/systemd/system/
@@ -104,11 +126,10 @@ sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable bridge-box.service
 
-# --- 9. Fix permissions ---
-sudo chown -R bridgebox:bridgebox "$BOX_DIR"
-sudo chown -R bridgebox:bridgebox "$APP_DIR"
+# --- 10. Fix permissions ---
+sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"
 
-# --- 10. Done ---
+# --- 11. Done ---
 echo "=== Installation complete ==="
 echo "WiFi SSID: $HOTSPOT_SSID"
 echo "Password: $HOTSPOT_PASS"
