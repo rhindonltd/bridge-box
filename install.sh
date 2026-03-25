@@ -21,13 +21,13 @@ HOSTNAME="bridge"
 REPO_BOX="https://github.com/rhindonltd/bridge-box.git"
 REPO_APP="https://github.com/rhindonltd/ukbridge-club-scorer.git"
 
-INSTALL_DIR="/home/pi"
+INSTALL_DIR="/home/bridgebox"
 BOX_DIR="$INSTALL_DIR/bridge-box"
 APP_DIR="$INSTALL_DIR/ukbridge-club-scorer"
 
-# --- 1. Ensure running as pi user ---
-if [ "$USER" != "pi" ]; then
-  echo "Please run as pi user"
+# --- 1. Ensure running as bridgebox user ---
+if [ "$USER" != "bridgebox" ]; then
+  echo "Please run as bridgebox user"
   exit 1
 fi
 
@@ -100,8 +100,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable bridge-box.service
 
 # --- 9. Fix permissions ---
-sudo chown -R pi:pi "$BOX_DIR"
-sudo chown -R pi:pi "$APP_DIR"
+sudo chown -R bridgebox:bridgebox "$BOX_DIR"
+sudo chown -R bridgebox:bridgebox "$APP_DIR"
 
 # --- 10. Done ---
 echo "=== Installation complete ==="

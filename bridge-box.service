@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/pi/bridge-box/startup.sh
+ExecStart=/home/bridgebox/bridge-box/startup.sh
 RemainAfterExit=yes
-User=pi
-WorkingDirectory=/home/pi
+User=bridgebox
+WorkingDirectory=/home/bridgebox
 
 [Install]
 WantedBy=multi-user.target
