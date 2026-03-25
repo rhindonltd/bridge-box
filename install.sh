@@ -34,7 +34,7 @@ fi
 # --- 2. Install system dependencies ---
 echo "Installing system dependencies..."
 
-sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get update
 
 echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
 echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
