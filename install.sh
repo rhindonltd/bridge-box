@@ -36,8 +36,11 @@ echo "Installing system dependencies..."
 
 sudo apt-get update
 
-# --- NOTE: IP Tables brings up a UI
-sudo apt-get install -y git curl avahi-daemon iptables iptables-persistent
+echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  git curl avahi-daemon iptables iptables-persistent
 
 # Install modern Node.js
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
