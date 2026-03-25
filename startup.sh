@@ -6,7 +6,7 @@ set -e
 IFACE="wlan0"
 APP_PORT=3000
 BOX_DIR="/home/bridgebox/bridge-box"
-APP_DIR="/home/bridgebox/ukbridge-club-scorer"
+APP_DIR="/home/bridgebox/bridge-box-scorer"
 CONNECTION_NAME="bridge-hotspot"
 WIFI_CONFIG="$BOX_DIR/wifi.json"
 

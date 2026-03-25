@@ -19,11 +19,11 @@ APP_PORT=3000
 HOSTNAME="bridge"
 
 REPO_BOX="https://github.com/rhindonltd/bridge-box.git"
-REPO_APP="https://github.com/rhindonltd/ukbridge-club-scorer.git"
+REPO_APP="https://github.com/rhindonltd/bridge-box-scorer.git"
 
 INSTALL_DIR="/home/bridgebox"
 BOX_DIR="$INSTALL_DIR/bridge-box"
-APP_DIR="$INSTALL_DIR/ukbridge-club-scorer"
+APP_DIR="$INSTALL_DIR/bridge-box-scorer"
 
 # --- 1. Ensure running as bridgebox user ---
 if [ "$USER" != "bridgebox" ]; then
