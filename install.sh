@@ -35,6 +35,8 @@ fi
 echo "Installing system dependencies..."
 
 sudo apt-get update
+
+# --- NOTE: IP Tables brings up a UI
 sudo apt-get install -y git curl avahi-daemon iptables iptables-persistent
 
 # Install modern Node.js
@@ -52,7 +54,7 @@ rm -rf "$BOX_DIR"
 rm -rf "$APP_DIR"
 
 git clone "$REPO_BOX" "$BOX_DIR"
-git clone "$REPO_APP" "$APP_DIR"
+git clone "$REPO_BOX" "$APP_DIR"
 
 # --- 5. Install PM2 ---
 if ! command -v pm2 &> /dev/null
