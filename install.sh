@@ -54,7 +54,7 @@ rm -rf "$BOX_DIR"
 rm -rf "$APP_DIR"
 
 git clone "$REPO_BOX" "$BOX_DIR"
-git clone "$REPO_BOX" "$APP_DIR"
+git clone "$REPO_APP" "$APP_DIR"
 
 # --- 5. Install PM2 ---
 if ! command -v pm2 &> /dev/null
