@@ -29,7 +29,7 @@ echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo deb
 echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git curl avahi-daemon iptables iptables-persistent jq
+  git curl avahi-daemon iptables iptables-persistent jq sqlite3
 
 # Install Node.js 22 LTS
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -

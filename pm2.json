@@ -5,7 +5,8 @@
       "script": "main-app.js",
       "watch": false,
       "env": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "DATABASE_URL": "/home/bridgebox/data"
       }
     }
   ]

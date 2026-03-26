@@ -8,6 +8,7 @@ exec > >(tee -a "$LOGFILE") 2>&1
 IFACE="wlan0"
 APP_PORT=3000
 CONNECTION_NAME="bridge-hotspot"
+NEW_HOSTNAME="bridge"
 
 echo "=== BridgeBox root setup ==="
 
@@ -33,5 +34,10 @@ iptables -t nat -F
 iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 80 -j REDIRECT --to-port $APP_PORT
 iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 443 -j REDIRECT --to-port $APP_PORT
 netfilter-persistent save
+
+sudo hostnamectl set-hostname bridge
+sudo sed -i "s/127\.0\.1\.1\s\+.*/127.0.1.1\t$NEW_HOSTNAME/" /etc/hosts
+
+sudo systemctl restart avahi-daemon
 
 echo "=== BridgeBox root setup complete ==="
