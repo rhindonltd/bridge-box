@@ -2,7 +2,7 @@
 #!/bin/bash
 # install.sh — BridgeBox factory installer (atomic-ready)
 
-set -e
+set -euo pipefail
 
 echo "=== Bridge Box Installer ==="
 
@@ -58,6 +58,7 @@ echo "Cloning bridge-box..."
 
 rm -rf "$BOX_DIR"
 git clone "$REPO_BOX" "$BOX_DIR"
+chmod +x "$BOX_DIR/startup.sh"
 
 # --- 5. Setup atomic app structure ---
 echo "Setting up application..."
