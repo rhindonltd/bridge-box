@@ -1,0 +1,16 @@
+[Unit]
+Description=BridgeBox App Update and PM2
+After=bridge-box-root.service
+Requires=bridge-box-root.service
+
+[Service]
+Type=simple
+ExecStart=/home/bridgebox/bridge-box-update.sh
+User=bridgebox
+Restart=on-failure
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
