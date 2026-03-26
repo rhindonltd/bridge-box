@@ -10,18 +10,16 @@ IFACE="wlan0"
 INSTALL_DIR="/home/bridgebox"
 CURRENT_LINK="$INSTALL_DIR/bridge-box-scorer/current"
 RELEASES_DIR="$INSTALL_DIR/bridge-box-scorer/releases"
-WIFI_CONFIG="$INSTALL_DIR/bridge-box/wifi.json"
+WIFI_CONFIG="$INSTALL_DIR/wifi.json"
 REPO_URL="https://github.com/rhindonltd/bridge-box-scorer.git"
 
 echo "=== BridgeBox app startup ==="
 
 # --- 1. START APP IMMEDIATELY ---
 echo "Starting app (hotspot mode)..."
-
 pm2 delete bridge 2>/dev/null || true
 pm2 start npm --name bridge -- start --prefix "$CURRENT_LINK"
 pm2 save
-
 echo "App started."
 
 # --- 2. WAIT FOR WIFI CONFIG ---
@@ -34,14 +32,22 @@ echo "WiFi config found."
 
 SSID=$(jq -r .ssid "$WIFI_CONFIG")
 PASSWORD=$(jq -r .password "$WIFI_CONFIG")
+HIDDEN=$(jq -r '.hidden // false' "$WIFI_CONFIG")  # default to false if not present
 
-echo "Connecting to WiFi: $SSID"
+echo "Connecting to WiFi: $SSID (hidden=$HIDDEN)"
 
 # --- 3. CONNECT TO WIFI ---
-if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-psk; then
+# Determine hidden flag for nmcli
+if [[ "$HIDDEN" == "true" || "$HIDDEN" == "True" ]]; then
+    HIDDEN_FLAG="yes"
+else
+    HIDDEN_FLAG="no"
+fi
+
+# Attempt connection
+if nmcli device wifi connect "$SSID" password "$PASSWORD" hidden "$HIDDEN_FLAG" >/dev/null 2>&1; then
 
     echo "WiFi connected, checking internet..."
-
     if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
         echo "Internet available — checking for updates..."
 
@@ -57,7 +63,6 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
             echo "Updating to $REMOTE_COMMIT..."
 
             NEW_RELEASE="$RELEASES_DIR/$REMOTE_COMMIT"
-
             [[ "$NEW_RELEASE" == "$RELEASES_DIR/"* ]] || { echo "Unsafe delete path"; exit 1; }
 
             rm -rf "$NEW_RELEASE"
@@ -86,14 +91,12 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
 
             # --- Switch symlink ---
             ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
-
             echo "Switched to new release."
 
             # --- Zero-downtime reload ---
             echo "Reloading app (zero downtime)..."
             pm2 reload bridge || {
                 echo "Reload failed — rolling back..."
-
                 if [ -L "$INSTALL_DIR/bridge-box-scorer/previous" ]; then
                     PREV=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous")
                     ln -sfn "$PREV" "$CURRENT_LINK"
@@ -105,33 +108,22 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
             }
 
             echo "Cleaning old releases..."
-
             cd "$RELEASES_DIR" || exit 1
-
-            # List directories sorted by newest first
             mapfile -t RELEASES < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
-
             KEEP=3
-
             COUNT=0
             for REL in "${RELEASES[@]}"; do
                 COUNT=$((COUNT + 1))
-
                 if [ "$COUNT" -le "$KEEP" ]; then
                     continue
                 fi
-
                 FULL_PATH="$(realpath "$REL")"
-
-                # Don't delete current or previous targets
                 CURRENT_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
                 PREVIOUS_TARGET=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous" 2>/dev/null || echo "")
-
                 if [ "$FULL_PATH" = "$CURRENT_TARGET" ] || [ "$FULL_PATH" = "$PREVIOUS_TARGET" ]; then
                     echo "Skipping active release: $FULL_PATH"
                     continue
                 fi
-
                 echo "Deleting old release: $FULL_PATH"
                 rm -rf "$FULL_PATH"
             done
@@ -150,7 +142,7 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
     nmcli device disconnect "$IFACE"
 
 else
-    echo "WiFi connection failed."
+    echo "WiFi connection failed. Check SSID, password, or hidden network setting."
 fi
 
 echo "=== BridgeBox ready ==="
