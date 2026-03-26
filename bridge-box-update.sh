@@ -32,117 +32,116 @@ echo "WiFi config found."
 
 SSID=$(jq -r .ssid "$WIFI_CONFIG")
 PASSWORD=$(jq -r .password "$WIFI_CONFIG")
-HIDDEN=$(jq -r '.hidden // false' "$WIFI_CONFIG")  # default to false if not present
 
-echo "Connecting to WiFi: $SSID (hidden=$HIDDEN)"
+echo "Connecting to WiFi: $SSID"
 
 # --- 3. CONNECT TO WIFI ---
-# Determine hidden flag for nmcli
-if [[ "$HIDDEN" == "true" || "$HIDDEN" == "True" ]]; then
-    HIDDEN_FLAG="yes"
+connect_wifi() {
+    local hidden_flag="$1"
+    nmcli device wifi connect "$SSID" password "$PASSWORD" hidden "$hidden_flag" >/dev/null 2>&1
+}
+
+# First try visible
+if connect_wifi "no"; then
+    echo "WiFi connected (visible SSID)."
+elif connect_wifi "yes"; then
+    echo "WiFi connected (hidden SSID)."
 else
-    HIDDEN_FLAG="no"
+    echo "WiFi connection failed. Check SSID and password."
+    exit 1
 fi
 
-# Attempt connection
-if nmcli device wifi connect "$SSID" password "$PASSWORD" hidden "$HIDDEN_FLAG" >/dev/null 2>&1; then
+# --- 4. CHECK INTERNET AND UPDATE APP ---
+if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+    echo "Internet available — checking for updates..."
+    mkdir -p "$RELEASES_DIR"
 
-    echo "WiFi connected, checking internet..."
-    if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-        echo "Internet available — checking for updates..."
+    LOCAL_COMMIT=$(git -C "$CURRENT_LINK" rev-parse HEAD 2>/dev/null || echo "none")
+    REMOTE_COMMIT=$(git ls-remote "$REPO_URL" refs/heads/main | cut -f1)
 
-        mkdir -p "$RELEASES_DIR"
+    echo "Local:  $LOCAL_COMMIT"
+    echo "Remote: $REMOTE_COMMIT"
 
-        LOCAL_COMMIT=$(git -C "$CURRENT_LINK" rev-parse HEAD 2>/dev/null || echo "none")
-        REMOTE_COMMIT=$(git ls-remote "$REPO_URL" refs/heads/main | cut -f1)
+    if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+        echo "Updating to $REMOTE_COMMIT..."
 
-        echo "Local:  $LOCAL_COMMIT"
-        echo "Remote: $REMOTE_COMMIT"
+        NEW_RELEASE="$RELEASES_DIR/$REMOTE_COMMIT"
+        [[ "$NEW_RELEASE" == "$RELEASES_DIR/"* ]] || { echo "Unsafe delete path"; exit 1; }
 
-        if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
-            echo "Updating to $REMOTE_COMMIT..."
+        rm -rf "$NEW_RELEASE"
+        git clone "$REPO_URL" "$NEW_RELEASE"
 
-            NEW_RELEASE="$RELEASES_DIR/$REMOTE_COMMIT"
-            [[ "$NEW_RELEASE" == "$RELEASES_DIR/"* ]] || { echo "Unsafe delete path"; exit 1; }
+        cd "$NEW_RELEASE"
 
+        echo "Installing dependencies..."
+        npm install
+
+        echo "Building app..."
+        if ! npm run build; then
+            echo "Build failed — aborting update"
             rm -rf "$NEW_RELEASE"
-            git clone "$REPO_URL" "$NEW_RELEASE"
-
-            cd "$NEW_RELEASE"
-
-            echo "Installing dependencies..."
-            npm install
-
-            echo "Building app..."
-            if ! npm run build; then
-                echo "Build failed — aborting update"
-                rm -rf "$NEW_RELEASE"
-                exit 1
-            fi
-
-            echo "Build successful."
-
-            # --- Save current as previous ---
-            if [ -L "$CURRENT_LINK" ]; then
-                PREV_TARGET=$(readlink -f "$CURRENT_LINK")
-                ln -sfn "$PREV_TARGET" "$INSTALL_DIR/bridge-box-scorer/previous"
-                echo "Saved previous release: $PREV_TARGET"
-            fi
-
-            # --- Switch symlink ---
-            ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
-            echo "Switched to new release."
-
-            # --- Zero-downtime reload ---
-            echo "Reloading app (zero downtime)..."
-            pm2 reload bridge || {
-                echo "Reload failed — rolling back..."
-                if [ -L "$INSTALL_DIR/bridge-box-scorer/previous" ]; then
-                    PREV=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous")
-                    ln -sfn "$PREV" "$CURRENT_LINK"
-                    pm2 reload bridge
-                    echo "Rollback complete."
-                else
-                    echo "No previous version available!"
-                fi
-            }
-
-            echo "Cleaning old releases..."
-            cd "$RELEASES_DIR" || exit 1
-            mapfile -t RELEASES < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
-            KEEP=3
-            COUNT=0
-            for REL in "${RELEASES[@]}"; do
-                COUNT=$((COUNT + 1))
-                if [ "$COUNT" -le "$KEEP" ]; then
-                    continue
-                fi
-                FULL_PATH="$(realpath "$REL")"
-                CURRENT_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
-                PREVIOUS_TARGET=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous" 2>/dev/null || echo "")
-                if [ "$FULL_PATH" = "$CURRENT_TARGET" ] || [ "$FULL_PATH" = "$PREVIOUS_TARGET" ]; then
-                    echo "Skipping active release: $FULL_PATH"
-                    continue
-                fi
-                echo "Deleting old release: $FULL_PATH"
-                rm -rf "$FULL_PATH"
-            done
-
-            echo "Update complete."
-        else
-            echo "Already up to date."
+            exit 1
         fi
 
+        echo "Build successful."
+
+        # --- Save current as previous ---
+        if [ -L "$CURRENT_LINK" ]; then
+            PREV_TARGET=$(readlink -f "$CURRENT_LINK")
+            ln -sfn "$PREV_TARGET" "$INSTALL_DIR/bridge-box-scorer/previous"
+            echo "Saved previous release: $PREV_TARGET"
+        fi
+
+        # --- Switch symlink ---
+        ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
+        echo "Switched to new release."
+
+        # --- Zero-downtime reload ---
+        echo "Reloading app (zero downtime)..."
+        pm2 reload bridge || {
+            echo "Reload failed — rolling back..."
+            if [ -L "$INSTALL_DIR/bridge-box-scorer/previous" ]; then
+                PREV=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous")
+                ln -sfn "$PREV" "$CURRENT_LINK"
+                pm2 reload bridge
+                echo "Rollback complete."
+            else
+                echo "No previous version available!"
+            fi
+        }
+
+        echo "Cleaning old releases..."
+        cd "$RELEASES_DIR" || exit 1
+        mapfile -t RELEASES < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+        KEEP=3
+        COUNT=0
+        for REL in "${RELEASES[@]}"; do
+            COUNT=$((COUNT + 1))
+            if [ "$COUNT" -le "$KEEP" ]; then
+                continue
+            fi
+            FULL_PATH="$(realpath "$REL")"
+            CURRENT_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
+            PREVIOUS_TARGET=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous" 2>/dev/null || echo "")
+            if [ "$FULL_PATH" = "$CURRENT_TARGET" ] || [ "$FULL_PATH" = "$PREVIOUS_TARGET" ]; then
+                echo "Skipping active release: $FULL_PATH"
+                continue
+            fi
+            echo "Deleting old release: $FULL_PATH"
+            rm -rf "$FULL_PATH"
+        done
+
+        echo "Update complete."
     else
-        echo "No internet — skipping update."
+        echo "Already up to date."
     fi
 
-    # --- 4. RETURN TO HOTSPOT MODE ---
-    echo "Disconnecting WiFi (return to hotspot)..."
-    nmcli device disconnect "$IFACE"
-
 else
-    echo "WiFi connection failed. Check SSID, password, or hidden network setting."
+    echo "No internet — skipping update."
 fi
+
+# --- 5. RETURN TO HOTSPOT MODE ---
+echo "Disconnecting WiFi (return to hotspot)..."
+nmcli device disconnect "$IFACE"
 
 echo "=== BridgeBox ready ==="
