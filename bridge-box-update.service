@@ -5,7 +5,7 @@ Requires=bridge-box-root.service
 
 [Service]
 Type=simple
-ExecStart=/home/bridgebox/bridgebox/bridge-box-update.sh
+ExecStart=/home/bridgebox/bridge-box/bridge-box-update.sh
 User=bridgebox
 Restart=on-failure
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
