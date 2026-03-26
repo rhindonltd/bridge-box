@@ -1,5 +1,5 @@
-```bash
 #!/bin/bash
+
 # install.sh — BridgeBox factory installer (atomic-ready)
 
 set -euo pipefail
@@ -48,6 +48,38 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # Install Node.js 22 LTS
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+
+echo "Configuring sudo permissions..."
+
+sudo mkdir -p /usr/local/bridgebox/bin
+
+sudo tee /usr/local/bridgebox/bin/restart-service.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /bin/systemctl restart bridge-box
+EOF
+
+sudo tee /usr/local/bridgebox/bin/reboot.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /sbin/reboot
+EOF
+
+sudo chmod 750 /usr/local/bridgebox/bin/*.sh
+sudo chown root:root /usr/local/bridgebox/bin/*.sh
+
+SUDOERS_FILE="/etc/sudoers.d/bridgebox"
+
+sudo bash -c "cat > $SUDOERS_FILE" <<EOF
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-service.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
+EOF
+
+# Set correct permissions (VERY IMPORTANT)
+sudo chmod 440 $SUDOERS_FILE
+
+# Validate sudoers file (fails install if broken)
+sudo visudo -cf $SUDOERS_FILE
+
+echo "Sudo permissions configured."
 
 # --- 3. Enable Avahi ---
 sudo systemctl enable avahi-daemon
@@ -137,4 +169,3 @@ echo "Password: $HOTSPOT_PASS"
 echo "Rebooting..."
 
 sudo reboot
-```

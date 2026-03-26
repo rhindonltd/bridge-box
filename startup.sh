@@ -1,5 +1,5 @@
-```bash
 #!/bin/bash
+
 # startup.sh — BridgeBox runtime (safe, atomic, offline-first)
 
 LOGFILE="/home/bridgebox/startup.log"
@@ -171,4 +171,3 @@ fi
 echo "=== BridgeBox ready ==="
 echo "SSID: $HOTSPOT_SSID"
 echo "Open: http://bridge.local:$APP_PORT"
-```
