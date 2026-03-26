@@ -64,18 +64,77 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
             git clone "$REPO_URL" "$NEW_RELEASE"
 
             cd "$NEW_RELEASE"
+
+            echo "Installing dependencies..."
             npm install
-            npm run build
 
-            echo "Switching release..."
+            echo "Building app..."
+            if ! npm run build; then
+                echo "Build failed — aborting update"
+                rm -rf "$NEW_RELEASE"
+                exit 1
+            fi
 
-            pm2 stop bridge
+            echo "Build successful."
 
+            # --- Save current as previous ---
+            if [ -L "$CURRENT_LINK" ]; then
+                PREV_TARGET=$(readlink -f "$CURRENT_LINK")
+                ln -sfn "$PREV_TARGET" "$INSTALL_DIR/bridge-box-scorer/previous"
+                echo "Saved previous release: $PREV_TARGET"
+            fi
+
+            # --- Switch symlink ---
             ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
 
-            pm2 delete bridge 2>/dev/null || true
-            pm2 start npm --name bridge -- start --prefix "$CURRENT_LINK"
-            pm2 save
+            echo "Switched to new release."
+
+            # --- Zero-downtime reload ---
+            echo "Reloading app (zero downtime)..."
+            pm2 reload bridge || {
+                echo "Reload failed — rolling back..."
+
+                if [ -L "$INSTALL_DIR/bridge-box-scorer/previous" ]; then
+                    PREV=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous")
+                    ln -sfn "$PREV" "$CURRENT_LINK"
+                    pm2 reload bridge
+                    echo "Rollback complete."
+                else
+                    echo "No previous version available!"
+                fi
+            }
+
+            echo "Cleaning old releases..."
+
+            cd "$RELEASES_DIR" || exit 1
+
+            # List directories sorted by newest first
+            mapfile -t RELEASES < <(find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+
+            KEEP=3
+
+            COUNT=0
+            for REL in "${RELEASES[@]}"; do
+                COUNT=$((COUNT + 1))
+
+                if [ "$COUNT" -le "$KEEP" ]; then
+                    continue
+                fi
+
+                FULL_PATH="$(realpath "$REL")"
+
+                # Don't delete current or previous targets
+                CURRENT_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
+                PREVIOUS_TARGET=$(readlink -f "$INSTALL_DIR/bridge-box-scorer/previous" 2>/dev/null || echo "")
+
+                if [ "$FULL_PATH" = "$CURRENT_TARGET" ] || [ "$FULL_PATH" = "$PREVIOUS_TARGET" ]; then
+                    echo "Skipping active release: $FULL_PATH"
+                    continue
+                fi
+
+                echo "Deleting old release: $FULL_PATH"
+                rm -rf "$FULL_PATH"
+            done
 
             echo "Update complete."
         else
