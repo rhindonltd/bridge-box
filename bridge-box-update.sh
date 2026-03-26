@@ -45,6 +45,7 @@ if nmcli device wifi connect "$SSID" password "$PASSWORD" wifi-sec.key-mgmt wpa-
             cd "$NEW_RELEASE"
             npm install
             npm run build
+            npm run migrations
             ln -sfn "$NEW_RELEASE" "$CURRENT_LINK"
             echo "Update complete."
         else
