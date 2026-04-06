@@ -38,9 +38,11 @@ echo "Connecting to WiFi: $SSID"
 
 # --- 3. CONNECT TO WIFI ---
 connect_wifi() {
+    nmcli connection delete "$SSID" 2>/dev/null
     if [ "$HIDDEN" = "yes" ]; then
         nmcli device wifi connect "$SSID" password "$PASSWORD" hidden yes
     else
+
         nmcli device wifi connect "$SSID" password "$PASSWORD"
     fi
 }
