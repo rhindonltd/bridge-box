@@ -63,7 +63,7 @@ if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
     echo "Checking for apt updates..."
 
     sudo apt update
-    sudo apt upgrade
+    sudo apt upgrade -y
 
     echo "Checking for bridge-scorer updates..."
 
