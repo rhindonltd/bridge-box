@@ -154,7 +154,11 @@ else
 fi
 
 # --- 5. RETURN TO HOTSPOT MODE ---
-echo "Disconnecting WiFi (return to hotspot)..."
-nmcli device disconnect "$IFACE"
+echo "Returning to hotspot mode..."
+
+nmcli device disconnect "$IFACE" || true
+
+# Bring hotspot back
+nmcli connection up bridge-hotspot
 
 echo "=== BridgeBox ready ==="
