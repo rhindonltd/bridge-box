@@ -32,13 +32,13 @@ echo "WiFi config found."
 
 SSID=$(jq -r .ssid "$WIFI_CONFIG")
 PASSWORD=$(jq -r .password "$WIFI_CONFIG")
+HIDDEN=$(jq -r .hidden "$WIFI_CONFIG")
 
 echo "Connecting to WiFi: $SSID"
 
 # --- 3. CONNECT TO WIFI ---
 connect_wifi() {
-    local hidden_flag="$1"
-    nmcli device wifi connect "$SSID" password "$PASSWORD" hidden "$hidden_flag" >/dev/null 2>&1
+    nmcli device wifi connect "$SSID" password "$PASSWORD" hidden "$HIDDEN" 2>&1
 }
 
 # First try visible
