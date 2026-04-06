@@ -59,7 +59,14 @@ fi
 
 # --- 4. CHECK INTERNET AND UPDATE APP ---
 if ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-    echo "Internet available — checking for updates..."
+    echo "Internet available"
+    echo "Checking for apt updates..."
+
+    sudo apt update
+    sudo apt upgrade
+
+    echo "Checking for bridge-scorer updates..."
+
     mkdir -p "$RELEASES_DIR"
 
     LOCAL_COMMIT=$(git -C "$CURRENT_LINK" rev-parse HEAD 2>/dev/null || echo "none")
