@@ -8,6 +8,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 - `bridge-box-root.service` / `bridge-box-root.sh` — Runs as **root** at boot (before the update service). Brings up the WiFi hotspot (per-device password), enables IP forwarding, applies NAT via `bridge-box-nat.sh`, and sets the hostname to `bridge`.
 - `bridge-box-update.service` / `bridge-box-update.sh` — Runs as the **bridgebox** user after root setup. Single-instanced via `flock`. Starts the app via PM2 immediately, waits (bounded) for `wifi.json`, connects to real WiFi if available, performs atomic app updates (of the pinned `RELEASE_REF`) with rollback, then returns to hotspot mode and re-asserts NAT. A `trap ... EXIT` guarantees the box returns to hotspot mode on any exit path; network/build steps are wrapped in `timeout`.
 - `bridge-box-nat.sh` — Idempotent NAT/port-redirect script (guest 80/443 → app `APP_PORT`). Shared by `bridge-box-root.sh` (at boot) and re-applied after an update cycle via the `apply-nat.sh` sudo helper. Run as root.
+- `bridge-box-captive.sh` — Captive-portal DNS hijack. Writes a NetworkManager shared-dnsmasq drop-in (`/etc/NetworkManager/dnsmasq-shared.d/`) that resolves **all** hotspot DNS to the box's own IP, so guests who open any URL land on the app. Scoped to the hotspot only (does not affect the box's own outbound DNS during updates). Derives the hotspot IP at runtime; toggle via `captive.conf`. Run as root from `bridge-box-root.sh` before NAT.
 - `bridge-box-os-update.sh` — **Manual**, admin-run OS maintenance (`apt upgrade`). Deliberately NOT run automatically; see OS-update policy below.
 - `bridge-box-node-upgrade.sh` — **Manual**, admin-run Node.js **major** upgrade (e.g. 22 → 24). Re-points the NodeSource apt repo to a new major and rebuilds the current release against it. See Node policy below.
 - `bridge-box-healthcheck.service` / `.timer` / `bridge-box-healthcheck.sh` — Periodic watchdog (every ~2 min) that curls the app on `:3000` (health endpoint if available, else root URL) and `pm2 reload`s it if unresponsive. Catches the "hung but alive" case PM2 alone misses.
@@ -33,6 +34,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 ├── hotspot.conf                    # optional: HOTSPOT_PASS override (else derived from MAC)
 ├── hotspot-credentials.txt         # generated: effective SSID + password (chmod 600)
 ├── release.conf                    # optional: RELEASE_REF="<branch|tag>" to pin deploys
+├── captive.conf                    # optional: CAPTIVE_PORTAL="no" to disable the portal
 ├── .provisioned                    # marker: present only after a successful install
 ├── .update.lock                    # flock file for single-instance update runs
 ├── root.log                        # bounded (auto-truncated ~5 MB)
@@ -48,6 +50,7 @@ Also installed system-wide:
 - `/etc/systemd/system/bridge-box-{healthcheck,backup}.service` and `.timer`
 - `/usr/local/bridgebox/bin/{restart-service,reboot,apply-nat}.sh` (root-owned, invoked via sudoers)
 - `/etc/sudoers.d/bridgebox`
+- `/etc/NetworkManager/dnsmasq-shared.d/010-bridgebox-captive.conf` (captive-portal DNS drop-in)
 
 ## Install / provisioning invariants
 - `install.sh` is intended to be **safe to re-run** (re-clones, rebuilds, `mkdir -p`, `ln -sfn`, `enable` are idempotent).
@@ -63,6 +66,7 @@ Also installed system-wide:
 - **`APP_COMMIT` format** is the 7-char short hash. On a box that has never updated it shows the initial release label `app_initial` until the first successful update (#11) — expected, not a bug.
 - **Deploys can be pinned** (#12): `RELEASE_REF` (default `main`) in `release.conf` selects the branch/tag; the update checks out the exact resolved commit. Use a tag for reproducible fleet deployments.
 - **Off-box backups are intentionally out of scope** (#7): backups are local (disk or USB) only. Pushing player data off-box (NAS/cloud) is a possible future feature but has data-privacy implications and is a deliberate non-goal for now.
+- **Captive portal is DNS-hijack only, no app login.** The box resolves all hotspot DNS to itself so opening any URL shows the app; there is deliberately no sign-in/auth step. The DNS hijack is scoped to the hotspot's shared dnsmasq so it must NOT break the box's own outbound DNS during updates — verify this if changing network setup. True auto-popup behaviour in the OS captive-detection webview may later want a small landing-page handler in the scorer app (probe URLs), but that is not built and not required for the "open browser → app" flow. Disable per-box via `CAPTIVE_PORTAL="no"` in `captive.conf`.
 
 ## Rules for changes
 - The two systemd services have an ordering contract: `root` sets up network/firewall first, then `update` runs the app. Preserve `After=`/`Requires=`/`Before=` when editing.

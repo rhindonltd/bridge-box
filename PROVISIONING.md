@@ -125,8 +125,10 @@ From a phone or laptop:
    - To use a different password, create `/home/bridgebox/hotspot.conf` with
      `HOTSPOT_PASS="your-password"` and reboot (or restart `bridge-box-root`). You can always read
      the box's current SSID + password with `cat /home/bridgebox/hotspot-credentials.txt`.
-2. Open a browser and go to **`http://bridge.local`** (or just `http://` any address — ports 80
-   and 443 are redirected to the app). The scoring app should load.
+2. Open a browser and go to **any** web address — the box redirects everything to itself, so the
+   scoring app should load whatever you type (you don't need to know `bridge.local`). On many
+   phones a "sign in to network" page pops up on its own after joining, showing the app directly.
+   There is **no login** — players go straight to the main menu and start scoring.
 
 On the Pi itself you can confirm the app is healthy:
 
@@ -241,6 +243,16 @@ curl -f http://localhost:3000/healthz                           # confirm the ap
 The script re-points the package source and rebuilds the current app release against the new Node
 so nothing is left compiled against the old version. Don't do this mid-session.
 
+**Captive portal (auto-appearing app).** By default the box redirects all guest DNS to itself, so
+opening any web address shows the app and most phones pop it up automatically on join. This does
+not affect the box's own internet access for updates. To turn it off (guests would then need to
+type `bridge.local` themselves):
+
+```bash
+echo 'CAPTIVE_PORTAL="no"' > /home/bridgebox/captive.conf
+sudo systemctl restart bridge-box-root   # or reboot
+```
+
 **Backups.** Score data is backed up hourly and automatically. Backups are stored **on the device**
 (or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you want an
 off-site copy, periodically copy the newest files out of `/home/bridgebox/backups` (or the USB
@@ -304,6 +316,7 @@ sudo apt-get -f install
 - Hotspot credentials (generated): `/home/bridgebox/hotspot-credentials.txt`
 - Optional hotspot password override: `/home/bridgebox/hotspot.conf` (`HOTSPOT_PASS="..."`)
 - Optional version pin: `/home/bridgebox/release.conf` (`RELEASE_REF="..."`)
+- Optional captive-portal toggle: `/home/bridgebox/captive.conf` (`CAPTIVE_PORTAL="no"`)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
 - Logs: `~/install.log`, `~/root.log`, `~/update.log`, `~/healthcheck.log`, `~/backup.log`
   (all auto-truncated so they can't fill the disk)
@@ -335,3 +348,7 @@ cat /home/bridgebox/hotspot-credentials.txt # this box's hotspot SSID + password
 - *Page won't load but hotspot works:* check `pm2 logs bridge` and `curl .../healthz` on the Pi.
 - *Update never happens:* verify `wifi.json` is valid JSON with a reachable network; the box only
   updates when it actually gets internet.
+- *App doesn't appear automatically (have to type `bridge.local`):* the captive portal may have
+  failed to configure. Check `sudo journalctl -u bridge-box-root -b` for a captive-portal warning,
+  and confirm the drop-in exists: `ls /etc/NetworkManager/dnsmasq-shared.d/`. Typing `bridge.local`
+  always works as a fallback.
