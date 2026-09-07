@@ -108,8 +108,21 @@ sudo reboot
 On reboot the device runs its startup automatically:
 - `bridge-box-root` (as root) brings up the hotspot, firewall/NAT, and sets the hostname to
   `bridge`.
-- `bridge-box-update` (as `bridgebox`) starts the app immediately, then looks for optional WiFi
-  config to fetch updates, and finally returns to hotspot mode.
+- `bridge-box-update` (as `bridgebox`) does a quick update check first (only if `wifi.json` is
+  present), **downloads** any newer app version, returns to the hotspot, and then starts the app.
+- `bridge-box-build` (as `bridgebox`) quietly builds a freshly-downloaded version in the background;
+  that version goes live the **next** time the box is switched on.
+
+How updates work (worth knowing):
+- The box only checks for updates **at switch-on** — there's no background schedule, which suits a
+  device that's unplugged and put away between sessions.
+- To keep switch-on-to-game fast, the update at boot only **downloads**; the slow build happens in
+  the background afterwards and the new version is activated at the *next* boot. So a new release
+  lands one session after it's published. An offline box (no `wifi.json`) skips all this and boots
+  straight to the app.
+- If `wifi.json` is present, boot waits for the (bounded, max ~90s) update check before the app
+  appears. If the WiFi is flaky it gives up quickly and starts the app anyway — the app always
+  starts.
 
 Give it a minute or two after boot to settle.
 
@@ -168,8 +181,9 @@ EOF
 ```
 
 - Set `"hidden": "yes"` only if your network doesn't broadcast its name.
-- The box connects, checks for a newer app version, updates atomically (with automatic rollback if
-  the new version fails to build or start), then returns to hotspot mode.
+- On each switch-on the box connects, downloads any newer app version, and returns to the hotspot;
+  it builds that version in the background and activates it on the following switch-on (with
+  automatic rollback if the new version turns out not to start). So updates land one session later.
 - The file holds your WiFi password in plaintext; the box tightens it to `chmod 600` automatically.
 
 **Pinning the app version (optional).** By default the box tracks the `main` branch. To pin a
@@ -182,11 +196,16 @@ echo 'RELEASE_REF="v1.4.0"' > /home/bridgebox/release.conf
 
 `RELEASE_REF` can be a branch or a tag. The box deploys the exact commit that ref points to.
 
-To trigger an update cycle without rebooting:
+To force an update check now (downloads a newer version; it still builds in the background and goes
+live at the next switch-on):
 
 ```bash
 sudo systemctl restart bridge-box-update
+sudo systemctl start bridge-box-build     # optional: kick the background build now
 ```
+
+The simplest way to fully apply an update is just to switch the box off and on twice: once to
+download + build, and the next time to run the new version.
 
 > If `wifi.json` is missing or invalid, or the network can't be reached, the box just stays in
 > hotspot mode and keeps serving — this is by design.
@@ -222,13 +241,16 @@ The box is now ready for use. Power it off/on as needed — it comes back up on 
 
 **OS security updates (manual, occasional).** The box does **not** update its operating system
 automatically — this keeps it predictable and avoids a surprise kernel/firmware change breaking it
-mid-session. Every so often, when the box has internet and no game is running, apply OS updates by
-hand:
+mid-session. Every so often, when no game is running, apply OS updates by hand:
 
 ```bash
 sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh
 sudo reboot   # if it says the kernel changed
 ```
+
+You don't need to connect the box to the internet first: if it isn't already online, the script
+temporarily switches to the WiFi network in `wifi.json`, does the update, and switches back to the
+hotspot automatically. (It needs a valid `wifi.json` — see Step 6 — or an Ethernet cable.)
 
 **Node.js version.** Node is installed from the NodeSource repository, pinned to a major version
 (24 by default). Routine OS updates keep it patched *within* that major but never jump to a new one
@@ -241,7 +263,9 @@ curl -f http://localhost:3000/healthz                           # confirm the ap
 ```
 
 The script re-points the package source and rebuilds the current app release against the new Node
-so nothing is left compiled against the old version. Don't do this mid-session.
+so nothing is left compiled against the old version. Like the OS-update script, it will switch to
+the `wifi.json` network for internet if needed and return to the hotspot afterwards. Don't do this
+mid-session.
 
 **Captive portal (auto-appearing app).** By default the box redirects all guest DNS to itself, so
 opening any web address shows the app and most phones pop it up automatically on join. This does
@@ -325,7 +349,8 @@ sudo apt-get -f install
 | Unit | Runs as | Purpose |
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
-| `bridge-box-update.service` | bridgebox | Start app, optional WiFi/update, return to hotspot |
+| `bridge-box-update.service` | bridgebox | Boot: activate pending update, download new one, start app |
+| `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
 | `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: reload app if it's not responding |
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
@@ -334,7 +359,7 @@ sudo apt-get -f install
 pm2 status                              # is the app running?
 pm2 logs bridge                         # app logs
 curl -f http://localhost:3000/healthz   # health + running version
-sudo systemctl restart bridge-box-update   # re-run app start + update cycle
+sudo systemctl restart bridge-box-update   # re-run the boot update/download + app start
 sudo journalctl -u bridge-box-root -b       # boot-time network setup log
 sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh      # manual OS security updates
 sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 24  # move to a new Node major

@@ -20,8 +20,18 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-if ! timeout 15 ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-    echo "No internet — connect the box to WiFi/Ethernet first. Aborting." >&2
+# Coordinate with the update service and bring the box online (via the
+# wifi.json client network if not already connected); always return to hotspot
+# mode afterwards.
+# shellcheck source=bridge-box-wifi-lib.sh
+. /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
+if ! bb_acquire_lock; then
+    echo "Aborting — try again shortly." >&2
+    exit 1
+fi
+trap bb_return_to_hotspot EXIT
+if ! bb_wifi_online; then
+    echo "Could not get the box online (check wifi.json). Aborting." >&2
     exit 1
 fi
 

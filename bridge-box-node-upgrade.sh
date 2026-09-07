@@ -7,12 +7,12 @@
 # re-pointing the NodeSource repo and then rebuilding the app against the new
 # runtime, so it is deliberately a separate, hands-on step.
 #
-# Usage (run on the device, with internet, no game in progress):
+# Usage (run on the device, no game in progress):
 #   sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 24
 #
-# After this, rebuild/redeploy the app so it is built against the new Node:
-#   sudo systemctl restart bridge-box-update    # re-runs install/build path
-# (or trigger an update cycle if a newer app release is pinned).
+# It switches to the wifi.json network for internet if needed (returning to the
+# hotspot afterwards), installs the new Node major, and rebuilds the current
+# app release against it so nothing is left compiled against the old runtime.
 
 set -euo pipefail
 
@@ -28,8 +28,18 @@ if ! [[ "$TARGET_MAJOR" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-if ! timeout 15 ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-    echo "No internet — connect the box first. Aborting." >&2
+# Coordinate with the update service and bring the box online (via the
+# wifi.json client network if not already connected); always return to hotspot
+# mode afterwards.
+# shellcheck source=bridge-box-wifi-lib.sh
+. /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
+if ! bb_acquire_lock; then
+    echo "Aborting — try again shortly." >&2
+    exit 1
+fi
+trap bb_return_to_hotspot EXIT
+if ! bb_wifi_online; then
+    echo "Could not get the box online (check wifi.json). Aborting." >&2
     exit 1
 fi
 
