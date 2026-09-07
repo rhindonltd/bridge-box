@@ -1,0 +1,11 @@
+[Unit]
+Description=BridgeBox App Health Check
+After=bridge-box-update.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/bridgebox/bridge-box/bridge-box-healthcheck.sh
+User=bridgebox
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal

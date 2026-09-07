@@ -3,6 +3,17 @@
 
 set -euo pipefail
 LOGFILE="/home/bridgebox/root.log"
+
+# Bounded logging: truncate to the most recent ~2.5 MB if it grows past ~5 MB,
+# so the log can't slowly fill the disk over the life of the device.
+MAX_LOG_BYTES=$((5 * 1024 * 1024))
+if [ -f "$LOGFILE" ]; then
+    LOG_SIZE=$(stat -c%s "$LOGFILE" 2>/dev/null || echo 0)
+    if [ "$LOG_SIZE" -gt "$MAX_LOG_BYTES" ]; then
+        tail -c "$((MAX_LOG_BYTES / 2))" "$LOGFILE" > "$LOGFILE.tmp" 2>/dev/null || true
+        mv "$LOGFILE.tmp" "$LOGFILE" 2>/dev/null || true
+    fi
+fi
 exec > >(tee -a "$LOGFILE") 2>&1
 
 IFACE="wlan0"

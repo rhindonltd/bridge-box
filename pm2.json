@@ -6,7 +6,10 @@
       "watch": false,
       "env": {
         "NODE_ENV": "production",
-        "DATABASE_URL": "/home/bridgebox/data"
+        "DATABASE_URL": "/home/bridgebox/data",
+        "PORT": "3000",
+        "HOST": "0.0.0.0",
+        "APP_COMMIT": ""
       }
     }
   ]
