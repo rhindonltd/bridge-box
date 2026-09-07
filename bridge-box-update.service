@@ -8,6 +8,12 @@ Type=simple
 ExecStart=/home/bridgebox/bridge-box/bridge-box-update.sh
 User=bridgebox
 Restart=on-failure
+# HOME is required so PM2 uses /home/bridgebox/.pm2 (its daemon/state/logs live
+# there). Without it, systemd doesn't set HOME and PM2 starts under a different
+# home, so `pm2 status` as bridgebox can't see the process and the app doesn't
+# actually run. PM2_HOME pins it explicitly too.
+Environment=HOME=/home/bridgebox
+Environment=PM2_HOME=/home/bridgebox/.pm2
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
