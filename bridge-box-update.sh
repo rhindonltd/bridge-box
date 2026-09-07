@@ -109,25 +109,46 @@ start_app() {
     [ "$APP_STARTED" = "1" ] && return 0
     APP_STARTED=1
     export APP_COMMIT="$(resolve_commit)"
-    echo "Starting app (commit $APP_COMMIT)..."
+    export NODE_ENV=production
+    local rel
+    rel="$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "$CURRENT_LINK")"
+    echo "Starting app (commit $APP_COMMIT) from $rel..."
     pm2 delete bridge 2>/dev/null || true
-    # --cwd (not npm --prefix) so process.cwd() is the release dir.
-    if ! APP_COMMIT="$APP_COMMIT" pm2 start npm --name bridge --cwd "$CURRENT_LINK" -- start; then
-        echo "ERROR: 'pm2 start' returned non-zero."
+
+    # Launch the app's entrypoint DIRECTLY, not via `npm start`. Going through
+    # npm under systemd is fragile (npm/tsx PATH resolution + the `exec` in the
+    # start script makes PM2 lose track of the process). The app's start is
+    # currently: tsx --require ./scripts/allow-server-only.cjs server.ts
+    # so we run tsx by absolute path with --interpreter none.
+    # NOTE: this still relies on tsx. Once the app ships a compiled
+    # dist/server.js (see scorer-startup-spec.md), switch this to plain node.
+    local tsx_bin="$rel/node_modules/.bin/tsx"
+    if [ -x "$tsx_bin" ]; then
+        APP_COMMIT="$APP_COMMIT" NODE_ENV=production pm2 start "$tsx_bin" \
+            --name bridge --cwd "$rel" --interpreter none \
+            -- --require ./scripts/allow-server-only.cjs server.ts \
+            || echo "ERROR: 'pm2 start' (tsx) returned non-zero."
+    else
+        echo "tsx not found at $tsx_bin — falling back to 'pm2 start npm'."
+        APP_COMMIT="$APP_COMMIT" NODE_ENV=production pm2 start npm \
+            --name bridge --cwd "$rel" -- start \
+            || echo "ERROR: 'pm2 start npm' returned non-zero."
     fi
     pm2 save 2>/dev/null || true
 
-    # Verify the process actually registered and is online — don't claim success
+    # Verify the process actually registered AND is online — don't claim success
     # blindly (a silent start failure is how a broken boot hides itself).
     sleep 3
-    if pm2 jlist 2>/dev/null | grep -q '"name":"bridge"'; then
-        echo "App started (pm2 shows 'bridge')."
+    local status
+    status=$(pm2 jlist 2>/dev/null | tr ',' '\n' | grep -A2 '"name":"bridge"' | grep -o '"status":"[a-z]*"' | head -n1)
+    if echo "$status" | grep -q '"status":"online"'; then
+        echo "App started (pm2: bridge online)."
     else
-        echo "ERROR: app did not register with PM2. Diagnostics follow:"
-        echo "  HOME=$HOME  PM2_HOME=${PM2_HOME:-unset}"
-        echo "  which pm2: $(command -v pm2 || echo 'not found')"
-        echo "  which npm: $(command -v npm || echo 'not found')"
-        pm2 list 2>&1 | tail -n 5 || true
+        echo "ERROR: app not online after start (status: ${status:-none}). Diagnostics:"
+        echo "  HOME=$HOME  PM2_HOME=${PM2_HOME:-unset}  cwd=$rel"
+        echo "  tsx: $tsx_bin ($([ -x "$tsx_bin" ] && echo present || echo MISSING))"
+        echo "  which pm2/node/npm: $(command -v pm2 || echo -) / $(command -v node || echo -) / $(command -v npm || echo -)"
+        pm2 logs bridge --lines 20 --nostream 2>/dev/null | tail -n 20 || true
     fi
 }
 
