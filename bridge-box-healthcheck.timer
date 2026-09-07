@@ -1,0 +1,12 @@
+[Unit]
+Description=Run BridgeBox health check periodically
+
+[Timer]
+# Start a couple of minutes after boot, then every 2 minutes.
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=bridge-box-healthcheck.service
+
+[Install]
+WantedBy=timers.target

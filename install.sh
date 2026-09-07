@@ -88,16 +88,29 @@ npm run build
 
 ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
 
-# --- 7. Install systemd services ---
+# --- 6b. Ensure box scripts are executable ---
+chmod +x "$BOX_DIR"/*.sh
+
+# --- 6c. Create backups dir ---
+mkdir -p "$INSTALL_DIR/backups"
+
+# --- 7. Install systemd services and timers ---
 echo "Installing systemd service files..."
 sudo cp "$BOX_DIR/bridge-box-root.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-update.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-backup.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-backup.timer" /etc/systemd/system/
 
 # --- 8. Enable and start services ---
 sudo systemctl daemon-reload
 sudo systemctl enable bridge-box-root bridge-box-update
+sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
 sudo systemctl start bridge-box-root
 sudo systemctl start bridge-box-update
+sudo systemctl start bridge-box-healthcheck.timer
+sudo systemctl start bridge-box-backup.timer
 
 # --- 9. Fix permissions ---
 sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"

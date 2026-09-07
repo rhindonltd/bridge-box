@@ -1,0 +1,14 @@
+[Unit]
+Description=Run BridgeBox data backup periodically
+
+[Timer]
+# Back up shortly after boot, then hourly. Persistent so a missed run
+# (device powered off) fires on next boot.
+OnBootSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+Unit=bridge-box-backup.service
+
+[Install]
+WantedBy=timers.target
