@@ -102,14 +102,18 @@ INITIAL_RELEASE="$RELEASES_DIR/app_initial"
 rm -rf "$INITIAL_RELEASE"
 git clone "$REPO_APP" "$INITIAL_RELEASE"
 
+# Ensure box scripts are executable before we call one of them.
+chmod +x "$BOX_DIR"/*.sh
+
+# Supply the app's .env (gitignored in the app repo) + create data dirs before
+# building the initial release. The prebuild migration and next build need it.
+"$BOX_DIR/bridge-box-deploy-env.sh" "$INITIAL_RELEASE"
+
 cd "$INITIAL_RELEASE"
 npm install
 npm run build
 
 ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
-
-# --- 6b. Ensure box scripts are executable ---
-chmod +x "$BOX_DIR"/*.sh
 
 # --- 6c. Create backups dir ---
 mkdir -p "$INSTALL_DIR/backups"

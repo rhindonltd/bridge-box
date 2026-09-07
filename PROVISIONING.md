@@ -334,13 +334,15 @@ sudo apt-get -f install
 **Key locations on the device**
 - Provisioning scripts: `/home/bridgebox/bridge-box`
 - App releases: `/home/bridgebox/bridge-box-scorer/releases/`, active via `current` symlink
-- Score data (SQLite): `/home/bridgebox/data`
+- Score data (SQLite): `/home/bridgebox/data` (per-game DBs under `/home/bridgebox/data/games`)
 - Backups: `/home/bridgebox/backups` (or a mounted USB stick)
 - Optional WiFi config: `/home/bridgebox/wifi.json` (auto `chmod 600`)
 - Hotspot credentials (generated): `/home/bridgebox/hotspot-credentials.txt`
 - Optional hotspot password override: `/home/bridgebox/hotspot.conf` (`HOTSPOT_PASS="..."`)
 - Optional version pin: `/home/bridgebox/release.conf` (`RELEASE_REF="..."`)
 - Optional captive-portal toggle: `/home/bridgebox/captive.conf` (`CAPTIVE_PORTAL="no"`)
+- Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
+  `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
 - Logs: `~/install.log`, `~/root.log`, `~/update.log`, `~/healthcheck.log`, `~/backup.log`
   (all auto-truncated so they can't fill the disk)

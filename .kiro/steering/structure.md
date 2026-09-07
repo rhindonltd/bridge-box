@@ -15,8 +15,10 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 - `bridge-box-node-upgrade.sh` — **Manual**, admin-run Node.js **major** upgrade (e.g. 22 → 24). Re-points the NodeSource apt repo to a new major and rebuilds the current release against it. See Node policy below. Also auto-switches to client WiFi via the lib.
 - `bridge-box-healthcheck.service` / `.timer` / `bridge-box-healthcheck.sh` — Periodic watchdog (every ~2 min) that curls the app on `:3000` (health endpoint if available, else root URL) and `pm2 reload`s it if unresponsive. Catches the "hung but alive" case PM2 alone misses.
 - `bridge-box-backup.service` / `.timer` / `bridge-box-backup.sh` — Hourly SQLite online backup (`sqlite3 .backup`) of **all** databases found recursively under `data/` (the app uses multiple: game-index, per-game, player, settings), preferring a mounted USB stick under `/media/bridgebox`, else `backups/`. Backup filenames encode the relative path so per-game DBs in subdirs don't collide; retains the newest N per database.
+- `bridge-box-deploy-env.sh` — Drops the scorer `.env` into a release dir before building (box-local `scorer.env` if present, else `scorer.env.template`) and ensures `data/`+`data/games/` exist. Called by `install.sh` and `bridge-box-build.sh` before their builds. Single source of truth for supplying build-time env.
+- `scorer.env.template` — Template `.env` for the scorer app (gitignored in that repo but needed at build time). Absolute DB paths only; no `NEXT_PUBLIC_APP_URL` (the app uses same-origin for sockets).
 - `main-app.js` — Minimal ESM launcher that runs `npm start` for the scorer app. Referenced by `pm2.json`.
-- `pm2.json` — PM2 ecosystem config (`bridge-app`, production env, `DATABASE_URL`, `PORT`, `HOST`, `APP_COMMIT`).
+- `pm2.json` — PM2 ecosystem config (`bridge-app`, production env: `DATABASE_URL`, `DATABASE_GAMES_URL`, `PORT`, `HOST`, `APP_COMMIT`).
 - `PROVISIONING.md` — Step-by-step guide for provisioning a new Pi, including interrupted-install recovery.
 - `README.md` — Install one-liner.
 - (The scorer app's own durability/operations notes live in the separate `bridge-box-scorer` repo as `durability-and-operations.md`.)
@@ -38,6 +40,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 ├── hotspot-credentials.txt         # generated: effective SSID + password (chmod 600)
 ├── release.conf                    # optional: RELEASE_REF="<branch|tag>" to pin deploys
 ├── captive.conf                    # optional: CAPTIVE_PORTAL="no" to disable the portal
+├── scorer.env                      # optional: box-local .env override (else the repo template is used)
 ├── .provisioned                    # marker: present only after a successful install
 ├── .update.lock                    # flock file for single-instance update runs
 ├── root.log                        # bounded (auto-truncated ~5 MB)
@@ -92,6 +95,7 @@ at the very start of a boot). Invariants to preserve:
 - **`wifi.json` is chmod 600** (#9) — it holds the club WiFi password in plaintext.
 - **`APP_COMMIT` format** is the 7-char short hash. On a box that has never updated it shows the initial release label `app_initial` until the first successful update (#11) — expected, not a bug.
 - **Deploys can be pinned** (#12): `RELEASE_REF` (default `main`) in `release.conf` selects the branch/tag; the update checks out the exact resolved commit. Use a tag for reproducible fleet deployments.
+- **The scorer `.env` is supplied by provisioning at build time.** It's gitignored in the app repo but the build (prebuild migration + `next build`) needs it, and each release is a fresh clone, so `bridge-box-deploy-env.sh` writes it into every release dir before building. Values use **absolute** paths (`/home/bridgebox/data`, `.../data/games`) so DBs live outside the pruned release dirs. Precedence: the app treats real env vars as authoritative and `.env` only fills gaps, so the running values come from `pm2.json` (which sets both DB vars); the `.env` mainly satisfies the build — keep the two in sync. Box-local override: `/home/bridgebox/scorer.env`. `NEXT_PUBLIC_APP_URL` is intentionally absent — the app connects Socket.IO to same-origin (a `NEXT_PUBLIC_` host would be baked into the client bundle at build and point phones at the wrong place).
 - **Off-box backups are intentionally out of scope** (#7): backups are local (disk or USB) only. Pushing player data off-box (NAS/cloud) is a possible future feature but has data-privacy implications and is a deliberate non-goal for now.
 - **Captive portal is DNS-hijack only, no app login.** The box resolves all hotspot DNS to itself so opening any URL shows the app; there is deliberately no sign-in/auth step. The DNS hijack is scoped to the hotspot's shared dnsmasq so it must NOT break the box's own outbound DNS during updates — verify this if changing network setup. True auto-popup behaviour in the OS captive-detection webview may later want a small landing-page handler in the scorer app (probe URLs), but that is not built and not required for the "open browser → app" flow. Disable per-box via `CAPTIVE_PORTAL="no"` in `captive.conf`.
 

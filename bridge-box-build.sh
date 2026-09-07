@@ -66,6 +66,13 @@ fi
 
 echo "Building release: $TO_BUILD (low priority)"
 
+# Supply the app's .env (gitignored in the app repo) before building — the
+# prebuild migration and next build need it. Also ensures data dirs exist.
+/home/bridgebox/bridge-box/bridge-box-deploy-env.sh "$TO_BUILD" || {
+    echo "Could not deploy .env — aborting build, will retry next boot."
+    exit 0
+}
+
 # Low CPU/IO priority so a game in progress stays responsive.
 NICE="nice -n 19"
 command -v ionice >/dev/null 2>&1 && NICE="ionice -c3 $NICE"
