@@ -115,21 +115,33 @@ start_app() {
     echo "Starting app (commit $APP_COMMIT) from $rel..."
     pm2 delete bridge 2>/dev/null || true
 
-    # Launch the app's entrypoint DIRECTLY, not via `npm start`. Going through
-    # npm under systemd is fragile (npm/tsx PATH resolution + the `exec` in the
-    # start script makes PM2 lose track of the process). The app's start is
-    # currently: tsx --require ./scripts/allow-server-only.cjs server.ts
-    # so we run tsx by absolute path with --interpreter none.
-    # NOTE: this still relies on tsx. Once the app ships a compiled
-    # dist/server.js (see scorer-startup-spec.md), switch this to plain node.
+    # Launch the app's entrypoint DIRECTLY, not via `npm start` (npm/tsx under
+    # systemd is fragile: PATH resolution + the `exec` in the start script makes
+    # PM2 lose the process). Preference order, self-adapting per release:
+    #   1. node dist/server.js   — compiled build, no tsx/npm (the target)
+    #   2. tsx server.ts         — interim, if the release predates the compile
+    #   3. npm start             — last resort
+    # The allow-server-only.cjs require is included only if that shim still
+    # exists in the release (the compile may have folded it in).
+    local dist_entry="$rel/dist/server.js"
     local tsx_bin="$rel/node_modules/.bin/tsx"
-    if [ -x "$tsx_bin" ]; then
+    local shim="./scripts/allow-server-only.cjs"
+    local node_args=""
+    [ -f "$rel/scripts/allow-server-only.cjs" ] && node_args="--require $shim"
+
+    if [ -f "$dist_entry" ]; then
+        echo "Launching compiled server: node dist/server.js (node_args='${node_args}')"
+        APP_COMMIT="$APP_COMMIT" NODE_ENV=production pm2 start "$dist_entry" \
+            --name bridge --cwd "$rel" ${node_args:+--node-args="$node_args"} \
+            || echo "ERROR: 'pm2 start' (node dist/server.js) returned non-zero."
+    elif [ -x "$tsx_bin" ]; then
+        echo "No dist/server.js — using interim tsx launch."
         APP_COMMIT="$APP_COMMIT" NODE_ENV=production pm2 start "$tsx_bin" \
             --name bridge --cwd "$rel" --interpreter none \
-            -- --require ./scripts/allow-server-only.cjs server.ts \
+            -- --require "$shim" server.ts \
             || echo "ERROR: 'pm2 start' (tsx) returned non-zero."
     else
-        echo "tsx not found at $tsx_bin — falling back to 'pm2 start npm'."
+        echo "No dist/server.js and no tsx — falling back to 'pm2 start npm'."
         APP_COMMIT="$APP_COMMIT" NODE_ENV=production pm2 start npm \
             --name bridge --cwd "$rel" -- start \
             || echo "ERROR: 'pm2 start npm' returned non-zero."
