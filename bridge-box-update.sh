@@ -153,10 +153,17 @@ start_app() {
 }
 
 # --- On ANY exit: return to hotspot, re-apply NAT, and guarantee app start ---
+# We deliberately force a 0 exit at the end: this boot script's job is "always
+# get the app running", and whether the app is up is owned by PM2 (and logged
+# loudly by start_app), not by this script's exit code. Without this, a non-zero
+# from any diagnostic/`set -e` step would propagate and make the Type=oneshot
+# unit report a failed job even though the app is fine.
 finish() {
+    set +e                      # this must always run to completion + exit 0
     bb_return_to_hotspot        # shared helper: hotspot up + re-apply NAT
     start_app                   # the app MUST end up running no matter what
     echo "=== BridgeBox ready $(date -Is) ==="
+    exit 0
 }
 trap finish EXIT
 
