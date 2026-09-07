@@ -70,7 +70,7 @@ EOF
 # cycle (#2) without broad iptables privileges. Wraps the repo's nat script.
 sudo tee /usr/local/bridgebox/bin/apply-nat.sh > /dev/null <<'EOF'
 #!/bin/bash
-exec /home/bridgebox/bridge-box/bridge-box-nat.sh
+exec /bin/bash /home/bridgebox/bridge-box/bridge-box-nat.sh
 EOF
 
 sudo chmod 750 /usr/local/bridgebox/bin/*.sh
@@ -105,9 +105,15 @@ git clone "$REPO_APP" "$INITIAL_RELEASE"
 # Ensure box scripts are executable before we call one of them.
 chmod +x "$BOX_DIR"/*.sh
 
+# Normalise line endings on all scripts first: a CRLF shebang (from a Windows
+# checkout) makes direct execution fail with "command not found". Strip any \r
+# so the calls below and the systemd services work regardless of checkout OS.
+sed -i 's/\r$//' "$BOX_DIR"/*.sh 2>/dev/null || true
+
 # Supply the app's .env (gitignored in the app repo) + create data dirs before
 # building the initial release. The prebuild migration and next build need it.
-"$BOX_DIR/bridge-box-deploy-env.sh" "$INITIAL_RELEASE"
+# Invoke via `bash` so this never depends on the exec bit or shebang.
+bash "$BOX_DIR/bridge-box-deploy-env.sh" "$INITIAL_RELEASE"
 
 cd "$INITIAL_RELEASE"
 npm install
