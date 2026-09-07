@@ -112,9 +112,23 @@ start_app() {
     echo "Starting app (commit $APP_COMMIT)..."
     pm2 delete bridge 2>/dev/null || true
     # --cwd (not npm --prefix) so process.cwd() is the release dir.
-    APP_COMMIT="$APP_COMMIT" pm2 start npm --name bridge --cwd "$CURRENT_LINK" -- start
-    pm2 save
-    echo "App started."
+    if ! APP_COMMIT="$APP_COMMIT" pm2 start npm --name bridge --cwd "$CURRENT_LINK" -- start; then
+        echo "ERROR: 'pm2 start' returned non-zero."
+    fi
+    pm2 save 2>/dev/null || true
+
+    # Verify the process actually registered and is online — don't claim success
+    # blindly (a silent start failure is how a broken boot hides itself).
+    sleep 3
+    if pm2 jlist 2>/dev/null | grep -q '"name":"bridge"'; then
+        echo "App started (pm2 shows 'bridge')."
+    else
+        echo "ERROR: app did not register with PM2. Diagnostics follow:"
+        echo "  HOME=$HOME  PM2_HOME=${PM2_HOME:-unset}"
+        echo "  which pm2: $(command -v pm2 || echo 'not found')"
+        echo "  which npm: $(command -v npm || echo 'not found')"
+        pm2 list 2>&1 | tail -n 5 || true
+    fi
 }
 
 # --- On ANY exit: return to hotspot, re-apply NAT, and guarantee app start ---

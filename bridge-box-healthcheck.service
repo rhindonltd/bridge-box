@@ -6,6 +6,8 @@ After=bridge-box-update.service
 Type=oneshot
 ExecStart=/home/bridgebox/bridge-box/bridge-box-healthcheck.sh
 User=bridgebox
+Environment=HOME=/home/bridgebox
+Environment=PM2_HOME=/home/bridgebox/.pm2
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal

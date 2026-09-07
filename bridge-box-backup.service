@@ -6,6 +6,7 @@ After=bridge-box-update.service
 Type=oneshot
 ExecStart=/home/bridgebox/bridge-box/bridge-box-backup.sh
 User=bridgebox
+Environment=HOME=/home/bridgebox
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
