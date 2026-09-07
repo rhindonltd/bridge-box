@@ -92,9 +92,10 @@ curl -sSL https://raw.githubusercontent.com/rhindonltd/bridge-box/refs/heads/mai
 
 **Expected output:** it ends with `=== Installation complete ===` and asks you to reboot.
 
-> **If it stops early:** open `~/install.log` and look near the bottom for the first error. The
-> most common causes are no internet (Step 2) or not running as the `bridgebox` user (Step 1).
-> The installer is safe to re-run once the cause is fixed.
+> **If it stops early or the Pi loses power mid-install:** the install is designed to be **re-run
+> from the top** — it cleans up and rebuilds as it goes. See
+> [Recovering from an interrupted install](#recovering-from-an-interrupted-install) below before
+> you reboot. As a rule: **only reboot (Step 4) once you've seen `=== Installation complete ===`.**
 
 ---
 
@@ -200,6 +201,45 @@ The box is now ready for use. Power it off/on as needed — it comes back up on 
 
 ---
 
+## Recovering from an interrupted install
+
+If the install stops early — an error, a dropped connection, or the Pi losing power partway
+through — the box may be **half provisioned**. This is safe to recover from: no score data exists
+yet, so the worst case is a box that doesn't work until you finish the install.
+
+**How to tell if provisioning finished.** The installer writes a marker file only on full success:
+
+```bash
+ls -l /home/bridgebox/.provisioned
+```
+
+- **File exists** → provisioning completed. A reboot is safe.
+- **File missing** → provisioning did **not** finish. Do **not** rely on a reboot — **re-run the
+  installer** (Step 3) instead. It is designed to be run again: it re-clones and rebuilds cleanly,
+  and it refuses to enable the app services unless the app actually built.
+
+**Special case — interrupted while installing system packages.** If the interruption happened
+during the `apt` package step, the package manager can be left half-configured, and re-running the
+installer will fail at the install step. Fix the package state first, then re-run the installer:
+
+```bash
+sudo dpkg --configure -a
+sudo apt-get -f install
+```
+
+**General recovery procedure:**
+1. Make sure the Pi has internet again (`ping -c 3 8.8.8.8`).
+2. If the interruption was during package install, run the two `dpkg`/`apt` commands above.
+3. Re-run the installer (Step 3).
+4. Wait for `=== Installation complete ===` and confirm `/home/bridgebox/.provisioned` exists.
+5. Only then reboot (Step 4).
+
+> Why this is safe: the installer clears the marker at the start and only rewrites it at the very
+> end, re-clones the repos and rebuilds the app each run, and will **abort rather than enable a
+> half-built app** — so a reboot can never bring up a crash-looping, broken box.
+
+---
+
 ## Quick reference
 
 **Network / access**
@@ -213,6 +253,7 @@ The box is now ready for use. Power it off/on as needed — it comes back up on 
 - Score data (SQLite): `/home/bridgebox/data`
 - Backups: `/home/bridgebox/backups` (or a mounted USB stick)
 - Optional WiFi config: `/home/bridgebox/wifi.json`
+- Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
 - Logs: `~/install.log`, `~/root.log`, `~/update.log`, `~/healthcheck.log`, `~/backup.log`
   (all auto-truncated so they can't fill the disk)
 

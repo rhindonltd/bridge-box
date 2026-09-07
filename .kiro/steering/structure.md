@@ -40,6 +40,11 @@ Also installed system-wide:
 - `/usr/local/bridgebox/bin/{restart-service,reboot}.sh` (root-owned, invoked via sudoers)
 - `/etc/sudoers.d/bridgebox`
 
+## Install / provisioning invariants
+- `install.sh` is intended to be **safe to re-run** (re-clones, rebuilds, `mkdir -p`, `ln -sfn`, `enable` are idempotent).
+- It clears `/home/bridgebox/.provisioned` at the start and writes it only on full success; absence of that marker means "not fully provisioned — re-run rather than trust a reboot."
+- It must **not** enable the app services unless `current` points at a successfully built release (guard in step 8), so an interrupted install can't leave a reboot bringing up a crash-looping app.
+
 ## Rules for changes
 - The two systemd services have an ordering contract: `root` sets up network/firewall first, then `update` runs the app. Preserve `After=`/`Requires=`/`Before=` when editing.
 - Keep the boot-time app start independent of internet — never make app startup depend on a successful WiFi/update step.
