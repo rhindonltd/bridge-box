@@ -64,13 +64,21 @@ for DB in "${DBS[@]}"; do
     NAME="${REL//\//_}"
     OUT="$DEST/${NAME}.${STAMP}.bak"
     # .backup is a safe online (hot) backup for a live database.
-    if sqlite3 "$DB" ".backup '$OUT'" 2>>"$LOGFILE"; then
-        log "Backed up $DB -> $OUT"
-    else
+    if ! sqlite3 "$DB" ".backup '$OUT'" 2>>"$LOGFILE"; then
         log "Backup FAILED for $DB"
         rm -f "$OUT" 2>/dev/null || true
         continue
     fi
+
+    # Verify the copy actually opens and is consistent (#6) — guards against a
+    # silently truncated/corrupt backup that still exited 0.
+    CHECK=$(sqlite3 "$OUT" 'PRAGMA integrity_check;' 2>>"$LOGFILE" || echo "error")
+    if [ "$CHECK" != "ok" ]; then
+        log "Backup integrity check FAILED for $DB (result: $CHECK) — discarding $OUT"
+        rm -f "$OUT" 2>/dev/null || true
+        continue
+    fi
+    log "Backed up $DB -> $OUT (integrity ok)"
 
     # Retention: keep the newest $KEEP backups for this db.
     mapfile -t OLD < <(ls -1t "$DEST/${NAME}."*.bak 2>/dev/null | tail -n +"$((KEEP + 1))")

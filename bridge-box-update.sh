@@ -13,6 +13,13 @@ RELEASES_DIR="$SCORER_DIR/releases"
 WIFI_CONFIG="$INSTALL_DIR/wifi.json"
 REPO_URL="https://github.com/rhindonltd/bridge-box-scorer.git"
 HOTSPOT_CONNECTION="bridge-hotspot"
+LOCKFILE="$INSTALL_DIR/.update.lock"
+
+# Which git ref to deploy. Override in $INSTALL_DIR/release.conf to pin the
+# device to a specific tag/branch for reproducible deployments (#12).
+# Example release.conf:  RELEASE_REF="v1.4.0"
+RELEASE_REF="main"
+[ -f "$INSTALL_DIR/release.conf" ] && . "$INSTALL_DIR/release.conf"
 
 LOGFILE="$INSTALL_DIR/update.log"
 
@@ -34,6 +41,16 @@ if [ -f "$LOGFILE" ]; then
 fi
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# --- Single-instance lock (#1) ---
+# Prevent a second run (e.g. a manual `systemctl restart bridge-box-update`)
+# from racing an in-progress update while it is switching wlan0 between hotspot
+# and client mode. The health-check timer also refuses to act while we hold this.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    echo "Another bridge-box-update run is in progress — exiting."
+    exit 0
+fi
+
 echo "=== BridgeBox app startup $(date -Is) ==="
 
 # --- Always return to hotspot mode, no matter how we exit ---
@@ -42,6 +59,11 @@ return_to_hotspot() {
     nmcli device disconnect "$IFACE" 2>/dev/null || true
     if ! nmcli connection up "$HOTSPOT_CONNECTION" 2>/dev/null; then
         echo "WARNING: failed to bring hotspot '$HOTSPOT_CONNECTION' up."
+    fi
+    # Re-assert the port redirects (#2): switching wlan0 to client mode and back
+    # can leave NetworkManager's rebuilt routing without our 80/443->app rules.
+    if ! sudo -n /usr/local/bridgebox/bin/apply-nat.sh 2>/dev/null; then
+        echo "WARNING: could not re-apply NAT redirects (guests may not reach the app on 80/443)."
     fi
     echo "=== BridgeBox ready (hotspot restored) ==="
 }
@@ -55,7 +77,14 @@ resolve_commit() {
     local c
     c=$(git -C "$CURRENT_LINK" rev-parse --short HEAD 2>/dev/null || echo "")
     if [ -z "$c" ]; then
+        # Fall back to the release dir name. For updated releases this is the
+        # full commit hash — trim to 7 chars so APP_COMMIT format is consistent
+        # with the git short hash (#10). For the initial release it is the
+        # literal 'app_initial' label until the first update (#11).
         c=$(basename "$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo unknown)")
+        if [[ "$c" =~ ^[0-9a-f]{40}$ ]]; then
+            c="${c:0:7}"
+        fi
     fi
     echo "$c"
 }
@@ -63,9 +92,15 @@ export APP_COMMIT="$(resolve_commit)"
 echo "Running release commit: $APP_COMMIT"
 
 # --- 1. START APP IMMEDIATELY (offline-first, must not depend on network) ---
+# Use --cwd (not npm --prefix) so the app's working directory is the release
+# dir; --prefix only changes npm's package resolution, not process.cwd() (#3).
+# Running from the 'current' symlink means a later `pm2 reload` picks up an
+# atomic release swap. Note: PM2 boot resurrection (pm2 startup) is
+# intentionally NOT configured — this systemd service is the single start path
+# on every boot; adding pm2 startup would create a competing one (#4).
 echo "Starting app (hotspot mode)..."
 pm2 delete bridge 2>/dev/null || true
-APP_COMMIT="$APP_COMMIT" pm2 start npm --name bridge -- start --prefix "$CURRENT_LINK"
+APP_COMMIT="$APP_COMMIT" pm2 start npm --name bridge --cwd "$CURRENT_LINK" -- start
 pm2 save
 echo "App started."
 
@@ -82,6 +117,9 @@ while [ ! -f "$WIFI_CONFIG" ]; do
 done
 
 echo "WiFi config found."
+
+# Tighten permissions (#9): wifi.json holds the club WiFi password in plaintext.
+chmod 600 "$WIFI_CONFIG" 2>/dev/null || true
 
 # --- 2a. Validate wifi.json before using it ---
 if ! jq empty "$WIFI_CONFIG" 2>/dev/null; then
@@ -149,14 +187,17 @@ if [ -L "$CURRENT_LINK" ] && [ ! -L "$PREVIOUS_LINK" ]; then
     echo "Recorded initial release as previous: $CUR_TARGET"
 fi
 
+# Resolve the target ref (#12). RELEASE_REF may be a branch or a tag; try both.
 LOCAL_COMMIT=$(git -C "$CURRENT_LINK" rev-parse HEAD 2>/dev/null || echo "none")
-REMOTE_COMMIT=$(timeout "$NMCLI_TIMEOUT" git ls-remote "$REPO_URL" refs/heads/main | cut -f1)
+REMOTE_COMMIT=$(timeout "$NMCLI_TIMEOUT" git ls-remote "$REPO_URL" \
+    "refs/heads/$RELEASE_REF" "refs/tags/$RELEASE_REF" | head -n1 | cut -f1)
 
+echo "Target ref: $RELEASE_REF"
 echo "Local:  $LOCAL_COMMIT"
 echo "Remote: $REMOTE_COMMIT"
 
 if [ -z "$REMOTE_COMMIT" ]; then
-    echo "Could not reach remote — skipping update."
+    echo "Could not resolve '$RELEASE_REF' on remote — skipping update."
     exit 0
 fi
 
@@ -173,6 +214,13 @@ NEW_RELEASE="$RELEASES_DIR/$REMOTE_COMMIT"
 rm -rf "$NEW_RELEASE"
 if ! timeout "$NMCLI_TIMEOUT" git clone "$REPO_URL" "$NEW_RELEASE"; then
     echo "Clone failed — aborting update."
+    rm -rf "$NEW_RELEASE"
+    exit 0
+fi
+
+# Check out the exact pinned commit so a branch moving mid-clone can't drift.
+if ! git -C "$NEW_RELEASE" checkout -q "$REMOTE_COMMIT"; then
+    echo "Could not check out $REMOTE_COMMIT — aborting update."
     rm -rf "$NEW_RELEASE"
     exit 0
 fi

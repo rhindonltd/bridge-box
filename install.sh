@@ -37,9 +37,15 @@ echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo deb
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git curl avahi-daemon iptables iptables-persistent jq sqlite3
 
-# Install Node.js 22 LTS
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+# Install Node.js from the NodeSource apt repo, pinned to a major line.
+# NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
+# major (e.g. 24.x.y). Crossing to a new major is a deliberate step — see
+# bridge-box-node-upgrade.sh. Override the default by exporting NODE_MAJOR.
+NODE_MAJOR="${NODE_MAJOR:-24}"
+echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
+curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+node --version
 
 # Install PM2 globally if not installed
 if ! command -v pm2 &> /dev/null; then
@@ -60,6 +66,13 @@ sudo tee /usr/local/bridgebox/bin/reboot.sh > /dev/null <<'EOF'
 exec /sbin/reboot
 EOF
 
+# Fixed-path wrapper so the app-user can re-apply NAT redirects after an update
+# cycle (#2) without broad iptables privileges. Wraps the repo's nat script.
+sudo tee /usr/local/bridgebox/bin/apply-nat.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /home/bridgebox/bridge-box/bridge-box-nat.sh
+EOF
+
 sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
@@ -67,6 +80,7 @@ SUDOERS_FILE="/etc/sudoers.d/bridgebox"
 sudo bash -c "cat > $SUDOERS_FILE" <<EOF
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-service.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
 EOF
 
 sudo chmod 440 $SUDOERS_FILE
