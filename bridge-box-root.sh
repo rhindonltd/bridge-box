@@ -60,12 +60,12 @@ grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1"
 # Captive portal: hijack DNS on the hotspot to the box so guests land on the
 # app. This may cycle the hotspot connection to reload dnsmasq, so run it
 # BEFORE applying NAT (NAT is applied last to reflect the final link state).
-IFACE="$IFACE" HOTSPOT_CONNECTION="$CONNECTION_NAME" /home/bridgebox/bridge-box/bridge-box-captive.sh || \
+IFACE="$IFACE" HOTSPOT_CONNECTION="$CONNECTION_NAME" bash /home/bridgebox/bridge-box/bridge-box-captive.sh || \
     echo "WARNING: captive portal setup failed — app still reachable by typing bridge.local."
 
 # NAT / port redirect (shared, idempotent script — same one re-applied after an
 # update cycle switches wlan0 and returns to hotspot mode).
-IFACE="$IFACE" APP_PORT="$APP_PORT" /home/bridgebox/bridge-box/bridge-box-nat.sh
+IFACE="$IFACE" APP_PORT="$APP_PORT" bash /home/bridgebox/bridge-box/bridge-box-nat.sh
 
 sudo hostnamectl set-hostname bridge
 sudo sed -i "s/127\.0\.1\.1\s\+.*/127.0.1.1\t$NEW_HOSTNAME/" /etc/hosts

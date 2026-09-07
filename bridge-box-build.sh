@@ -68,7 +68,8 @@ echo "Building release: $TO_BUILD (low priority)"
 
 # Supply the app's .env (gitignored in the app repo) before building — the
 # prebuild migration and next build need it. Also ensures data dirs exist.
-/home/bridgebox/bridge-box/bridge-box-deploy-env.sh "$TO_BUILD" || {
+# Invoke via `bash` so this never depends on the exec bit or shebang.
+bash /home/bridgebox/bridge-box/bridge-box-deploy-env.sh "$TO_BUILD" || {
     echo "Could not deploy .env — aborting build, will retry next boot."
     exit 0
 }

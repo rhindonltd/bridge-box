@@ -1,0 +1,12 @@
+# Shell scripts and systemd units run on Linux (the Pi) and MUST use LF line
+# endings — a CRLF in a shebang makes the kernel look for an interpreter named
+# e.g. "/bin/bash\r", which fails with a confusing "command not found".
+# Forcing eol=lf here means no checkout on any OS can reintroduce CRLF.
+*.sh      text eol=lf
+*.service text eol=lf
+*.timer   text eol=lf
+*.cjs     text eol=lf
+*.js      text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.template text eol=lf
