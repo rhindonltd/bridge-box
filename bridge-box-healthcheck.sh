@@ -5,7 +5,7 @@
 set -uo pipefail
 
 APP_URL="http://127.0.0.1:3000/"
-# If the scorer app exposes a health endpoint, prefer it (see scorer-app-improvements.md).
+# If the scorer app exposes a health endpoint, prefer it (falls back to APP_URL).
 HEALTH_URL="http://127.0.0.1:3000/healthz"
 LOGFILE="/home/bridgebox/healthcheck.log"
 
@@ -20,6 +20,13 @@ if [ -f "$LOGFILE" ]; then
 fi
 
 log() { echo "$(date -Is) $*" >> "$LOGFILE"; }
+
+# Don't act while an update is in progress (#1): it may be briefly switching
+# wlan0 / restarting the app, which would look unhealthy and trigger a needless
+# reload right as the update reloads too.
+if systemctl is-active --quiet bridge-box-update.service; then
+    exit 0
+fi
 
 check() {
     # Try the health endpoint first; fall back to the root URL.

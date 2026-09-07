@@ -2,7 +2,7 @@
 
 ## Platform
 - **Target hardware**: Raspberry Pi running Debian/Raspberry Pi OS (`apt`, `systemd`, `nmcli`/NetworkManager).
-- **Runtime**: Node.js 22 LTS (installed via NodeSource).
+- **Runtime**: Node.js LTS from the NodeSource apt repo, pinned to a major line via `NODE_MAJOR` in `install.sh` (default 24). `apt upgrade` stays within the major; major upgrades are a manual step (`bridge-box-node-upgrade.sh`).
 - **Process manager**: PM2 (installed globally), running the app as a process named `bridge`.
 - **App server**: The scorer app (separate `bridge-box-scorer` repo) is a Next.js app started with `npm start`, listening on port `3000`.
 

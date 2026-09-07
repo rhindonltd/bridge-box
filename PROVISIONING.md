@@ -82,7 +82,7 @@ curl -sSL https://raw.githubusercontent.com/rhindonltd/bridge-box/refs/heads/mai
 **What this does, in order (roughly 10–15 min):**
 1. Installs system dependencies: `git`, `curl`, `avahi-daemon`, `iptables` (+ persistence), `jq`,
    `sqlite3`.
-2. Installs **Node.js 22 LTS** and **PM2** (the process manager).
+2. Installs **Node.js** (current LTS, from the NodeSource repo) and **PM2** (the process manager).
 3. Sets up passwordless helpers so the app can request a service restart or reboot safely.
 4. Clones this provisioning repo to `/home/bridgebox/bridge-box`.
 5. Clones the scoring app and does the first `npm install` + `npm run build` into an atomic
@@ -108,8 +108,21 @@ sudo reboot
 On reboot the device runs its startup automatically:
 - `bridge-box-root` (as root) brings up the hotspot, firewall/NAT, and sets the hostname to
   `bridge`.
-- `bridge-box-update` (as `bridgebox`) starts the app immediately, then looks for optional WiFi
-  config to fetch updates, and finally returns to hotspot mode.
+- `bridge-box-update` (as `bridgebox`) does a quick update check first (only if `wifi.json` is
+  present), **downloads** any newer app version, returns to the hotspot, and then starts the app.
+- `bridge-box-build` (as `bridgebox`) quietly builds a freshly-downloaded version in the background;
+  that version goes live the **next** time the box is switched on.
+
+How updates work (worth knowing):
+- The box only checks for updates **at switch-on** — there's no background schedule, which suits a
+  device that's unplugged and put away between sessions.
+- To keep switch-on-to-game fast, the update at boot only **downloads**; the slow build happens in
+  the background afterwards and the new version is activated at the *next* boot. So a new release
+  lands one session after it's published. An offline box (no `wifi.json`) skips all this and boots
+  straight to the app.
+- If `wifi.json` is present, boot waits for the (bounded, max ~90s) update check before the app
+  appears. If the WiFi is flaky it gives up quickly and starts the app anyway — the app always
+  starts.
 
 Give it a minute or two after boot to settle.
 
@@ -120,9 +133,15 @@ Give it a minute or two after boot to settle.
 From a phone or laptop:
 
 1. Look for a WiFi network named **`BridgeBox-XXXX`** and connect to it.
-   - Default password: **`bridgebox`**
-2. Open a browser and go to **`http://bridge.local`** (or just `http://` any address — ports 80
-   and 443 are redirected to the app). The scoring app should load.
+   - Default password: **`bridgebox`**. This is meant to be a known, posted password — print it
+     (with the network name) on a card for the table so players can join quickly.
+   - To use a different password, create `/home/bridgebox/hotspot.conf` with
+     `HOTSPOT_PASS="your-password"` and reboot (or restart `bridge-box-root`). You can always read
+     the box's current SSID + password with `cat /home/bridgebox/hotspot-credentials.txt`.
+2. Open a browser and go to **any** web address — the box redirects everything to itself, so the
+   scoring app should load whatever you type (you don't need to know `bridge.local`). On many
+   phones a "sign in to network" page pops up on its own after joining, showing the app directly.
+   There is **no login** — players go straight to the main menu and start scoring.
 
 On the Pi itself you can confirm the app is healthy:
 
@@ -162,14 +181,31 @@ EOF
 ```
 
 - Set `"hidden": "yes"` only if your network doesn't broadcast its name.
-- The box connects, checks for a newer app version, updates atomically (with automatic rollback if
-  the new version fails to build or start), then returns to hotspot mode.
+- On each switch-on the box connects, downloads any newer app version, and returns to the hotspot;
+  it builds that version in the background and activates it on the following switch-on (with
+  automatic rollback if the new version turns out not to start). So updates land one session later.
+- The file holds your WiFi password in plaintext; the box tightens it to `chmod 600` automatically.
 
-To trigger an update cycle without rebooting:
+**Pinning the app version (optional).** By default the box tracks the `main` branch. To pin a
+device (or a fleet) to a specific released version for reproducibility, create
+`/home/bridgebox/release.conf`:
+
+```bash
+echo 'RELEASE_REF="v1.4.0"' > /home/bridgebox/release.conf
+```
+
+`RELEASE_REF` can be a branch or a tag. The box deploys the exact commit that ref points to.
+
+To force an update check now (downloads a newer version; it still builds in the background and goes
+live at the next switch-on):
 
 ```bash
 sudo systemctl restart bridge-box-update
+sudo systemctl start bridge-box-build     # optional: kick the background build now
 ```
+
+The simplest way to fully apply an update is just to switch the box off and on twice: once to
+download + build, and the next time to run the new version.
 
 > If `wifi.json` is missing or invalid, or the network can't be reached, the box just stays in
 > hotspot mode and keeps serving — this is by design.
@@ -198,6 +234,53 @@ If you plug in a USB stick (mounted under `/media/bridgebox/...`), backups go th
 under a `bridge-box-backups` folder.
 
 The box is now ready for use. Power it off/on as needed — it comes back up on its own.
+
+---
+
+## Ongoing maintenance
+
+**OS security updates (manual, occasional).** The box does **not** update its operating system
+automatically — this keeps it predictable and avoids a surprise kernel/firmware change breaking it
+mid-session. Every so often, when no game is running, apply OS updates by hand:
+
+```bash
+sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh
+sudo reboot   # if it says the kernel changed
+```
+
+You don't need to connect the box to the internet first: if it isn't already online, the script
+temporarily switches to the WiFi network in `wifi.json`, does the update, and switches back to the
+hotspot automatically. (It needs a valid `wifi.json` — see Step 6 — or an Ethernet cable.)
+
+**Node.js version.** Node is installed from the NodeSource repository, pinned to a major version
+(24 by default). Routine OS updates keep it patched *within* that major but never jump to a new one
+(e.g. they won't move you from 24 to 25). When you do want to move to a newer major — after the app
+has been confirmed to support it — do it deliberately:
+
+```bash
+sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 26   # example target major
+curl -f http://localhost:3000/healthz                           # confirm the app still runs
+```
+
+The script re-points the package source and rebuilds the current app release against the new Node
+so nothing is left compiled against the old version. Like the OS-update script, it will switch to
+the `wifi.json` network for internet if needed and return to the hotspot afterwards. Don't do this
+mid-session.
+
+**Captive portal (auto-appearing app).** By default the box redirects all guest DNS to itself, so
+opening any web address shows the app and most phones pop it up automatically on join. This does
+not affect the box's own internet access for updates. To turn it off (guests would then need to
+type `bridge.local` themselves):
+
+```bash
+echo 'CAPTIVE_PORTAL="no"' > /home/bridgebox/captive.conf
+sudo systemctl restart bridge-box-root   # or reboot
+```
+
+**Backups.** Score data is backed up hourly and automatically. Backups are stored **on the device**
+(or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you want an
+off-site copy, periodically copy the newest files out of `/home/bridgebox/backups` (or the USB
+stick) to somewhere safe. Note these files contain player/game data, so treat them accordingly.
 
 ---
 
@@ -243,16 +326,23 @@ sudo apt-get -f install
 ## Quick reference
 
 **Network / access**
-- Hotspot SSID: `BridgeBox-XXXX` (unique per device), password `bridgebox`
+- Hotspot SSID: `BridgeBox-XXXX` (unique per device); password defaults to `bridgebox`, overridable
+  via `hotspot.conf` — current value in `/home/bridgebox/hotspot-credentials.txt`
 - App URL for guests: `http://bridge.local` (ports 80/443 → app on 3000)
 - Hostname: `bridge`
 
 **Key locations on the device**
 - Provisioning scripts: `/home/bridgebox/bridge-box`
 - App releases: `/home/bridgebox/bridge-box-scorer/releases/`, active via `current` symlink
-- Score data (SQLite): `/home/bridgebox/data`
+- Score data (SQLite): `/home/bridgebox/data` (per-game DBs under `/home/bridgebox/data/games`)
 - Backups: `/home/bridgebox/backups` (or a mounted USB stick)
-- Optional WiFi config: `/home/bridgebox/wifi.json`
+- Optional WiFi config: `/home/bridgebox/wifi.json` (auto `chmod 600`)
+- Hotspot credentials (generated): `/home/bridgebox/hotspot-credentials.txt`
+- Optional hotspot password override: `/home/bridgebox/hotspot.conf` (`HOTSPOT_PASS="..."`)
+- Optional version pin: `/home/bridgebox/release.conf` (`RELEASE_REF="..."`)
+- Optional captive-portal toggle: `/home/bridgebox/captive.conf` (`CAPTIVE_PORTAL="no"`)
+- Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
+  `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
 - Logs: `~/install.log`, `~/root.log`, `~/update.log`, `~/healthcheck.log`, `~/backup.log`
   (all auto-truncated so they can't fill the disk)
@@ -261,7 +351,8 @@ sudo apt-get -f install
 | Unit | Runs as | Purpose |
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
-| `bridge-box-update.service` | bridgebox | Start app, optional WiFi/update, return to hotspot |
+| `bridge-box-update.service` | bridgebox | Boot: activate pending update, download new one, start app |
+| `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
 | `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: reload app if it's not responding |
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
@@ -270,8 +361,12 @@ sudo apt-get -f install
 pm2 status                              # is the app running?
 pm2 logs bridge                         # app logs
 curl -f http://localhost:3000/healthz   # health + running version
-sudo systemctl restart bridge-box-update   # re-run app start + update cycle
+sudo systemctl restart bridge-box-update   # re-run the boot update/download + app start
 sudo journalctl -u bridge-box-root -b       # boot-time network setup log
+sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh      # manual OS security updates
+sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 24  # move to a new Node major
+node --version                              # which Node the box is running
+cat /home/bridgebox/hotspot-credentials.txt # this box's hotspot SSID + password
 ```
 
 **Common issues**
@@ -280,3 +375,7 @@ sudo journalctl -u bridge-box-root -b       # boot-time network setup log
 - *Page won't load but hotspot works:* check `pm2 logs bridge` and `curl .../healthz` on the Pi.
 - *Update never happens:* verify `wifi.json` is valid JSON with a reachable network; the box only
   updates when it actually gets internet.
+- *App doesn't appear automatically (have to type `bridge.local`):* the captive portal may have
+  failed to configure. Check `sudo journalctl -u bridge-box-root -b` for a captive-portal warning,
+  and confirm the drop-in exists: `ls /etc/NetworkManager/dnsmasq-shared.d/`. Typing `bridge.local`
+  always works as a fallback.

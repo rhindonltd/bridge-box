@@ -37,9 +37,15 @@ echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo deb
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git curl avahi-daemon iptables iptables-persistent jq sqlite3
 
-# Install Node.js 22 LTS
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+# Install Node.js from the NodeSource apt repo, pinned to a major line.
+# NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
+# major (e.g. 24.x.y). Crossing to a new major is a deliberate step — see
+# bridge-box-node-upgrade.sh. Override the default by exporting NODE_MAJOR.
+NODE_MAJOR="${NODE_MAJOR:-24}"
+echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
+curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+node --version
 
 # Install PM2 globally if not installed
 if ! command -v pm2 &> /dev/null; then
@@ -60,6 +66,13 @@ sudo tee /usr/local/bridgebox/bin/reboot.sh > /dev/null <<'EOF'
 exec /sbin/reboot
 EOF
 
+# Fixed-path wrapper so the app-user can re-apply NAT redirects after an update
+# cycle (#2) without broad iptables privileges. Wraps the repo's nat script.
+sudo tee /usr/local/bridgebox/bin/apply-nat.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /home/bridgebox/bridge-box/bridge-box-nat.sh
+EOF
+
 sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
@@ -67,6 +80,7 @@ SUDOERS_FILE="/etc/sudoers.d/bridgebox"
 sudo bash -c "cat > $SUDOERS_FILE" <<EOF
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-service.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
 EOF
 
 sudo chmod 440 $SUDOERS_FILE
@@ -88,14 +102,18 @@ INITIAL_RELEASE="$RELEASES_DIR/app_initial"
 rm -rf "$INITIAL_RELEASE"
 git clone "$REPO_APP" "$INITIAL_RELEASE"
 
+# Ensure box scripts are executable before we call one of them.
+chmod +x "$BOX_DIR"/*.sh
+
+# Supply the app's .env (gitignored in the app repo) + create data dirs before
+# building the initial release. The prebuild migration and next build need it.
+"$BOX_DIR/bridge-box-deploy-env.sh" "$INITIAL_RELEASE"
+
 cd "$INITIAL_RELEASE"
 npm install
 npm run build
 
 ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
-
-# --- 6b. Ensure box scripts are executable ---
-chmod +x "$BOX_DIR"/*.sh
 
 # --- 6c. Create backups dir ---
 mkdir -p "$INSTALL_DIR/backups"
@@ -104,6 +122,7 @@ mkdir -p "$INSTALL_DIR/backups"
 echo "Installing systemd service files..."
 sudo cp "$BOX_DIR/bridge-box-root.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-update.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-build.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.service" /etc/systemd/system/
@@ -121,10 +140,11 @@ if [ ! -e "$CURRENT_LINK" ]; then
 fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable bridge-box-root bridge-box-update
+sudo systemctl enable bridge-box-root bridge-box-update bridge-box-build
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
 sudo systemctl start bridge-box-root
 sudo systemctl start bridge-box-update
+# bridge-box-build runs after update; enabling is enough (it fires at boot).
 sudo systemctl start bridge-box-healthcheck.timer
 sudo systemctl start bridge-box-backup.timer
 

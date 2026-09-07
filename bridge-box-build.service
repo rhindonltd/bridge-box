@@ -1,0 +1,18 @@
+[Unit]
+Description=BridgeBox Background App Build (Phase 2)
+After=bridge-box-update.service
+Requires=bridge-box-update.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/bridgebox/bridge-box/bridge-box-build.sh
+User=bridgebox
+# Low priority so a live game is not disturbed by the build.
+Nice=19
+IOSchedulingClass=idle
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
