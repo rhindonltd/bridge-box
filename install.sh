@@ -73,6 +73,15 @@ sudo tee /usr/local/bridgebox/bin/apply-nat.sh > /dev/null <<'EOF'
 exec /bin/bash /home/bridgebox/bridge-box/bridge-box-nat.sh
 EOF
 
+# Fixed-path wrapper for privileged WiFi control (client connect / return to
+# hotspot). Lets the boot update service (running as bridgebox) switch networks
+# via root, without granting bridgebox broad NetworkManager rights. Passes the
+# verb (connect|hotspot) through.
+sudo tee /usr/local/bridgebox/bin/wifi-ctl.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /bin/bash /home/bridgebox/bridge-box/bridge-box-wifi-ctl.sh "$@"
+EOF
+
 sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
@@ -81,6 +90,8 @@ sudo bash -c "cat > $SUDOERS_FILE" <<EOF
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-service.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh connect
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh hotspot
 EOF
 
 sudo chmod 440 $SUDOERS_FILE
