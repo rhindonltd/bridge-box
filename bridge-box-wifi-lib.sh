@@ -35,7 +35,7 @@ BB_WIFI_CTL="/usr/local/bridgebox/bin/wifi-ctl.sh"
 # Are we running as root? os-update / node-upgrade run under sudo (root) and can
 # drive nmcli directly; the boot update service runs as bridgebox and must route
 # privileged operations through the sudo helper.
-_bb_is_root() { [ "$(id -u)" -eq 0 ]; }
+_bb_is_root() { [ "${EUID:-$(id -u 2>/dev/null || echo 1000)}" = "0" ]; }
 
 # Acquire the shared network lock so this run can't race bridge-box-update.sh
 # (or another maintenance run) while any of them switch wlan0. Waits up to

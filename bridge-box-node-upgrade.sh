@@ -18,7 +18,7 @@ set -euo pipefail
 
 TARGET_MAJOR="${1:-}"
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "${EUID:-$(id -u 2>/dev/null || echo 1000)}" != "0" ]; then
     echo "Please run with sudo." >&2
     exit 1
 fi
