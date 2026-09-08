@@ -82,7 +82,8 @@ curl -sSL https://raw.githubusercontent.com/rhindonltd/bridge-box/refs/heads/mai
 **What this does, in order (roughly 10–15 min):**
 1. Installs system dependencies: `git`, `curl`, `avahi-daemon`, `iptables` (+ persistence), `jq`,
    `sqlite3`.
-2. Installs **Node.js** (current LTS, from the NodeSource repo) and **PM2** (the process manager).
+2. Installs **Node.js** (current LTS, from the NodeSource repo). The app runs as a native systemd
+   service (no separate process manager).
 3. Sets up passwordless helpers so the app can request a service restart or reboot safely.
 4. Clones this provisioning repo to `/home/bridgebox/bridge-box`.
 5. Clones the scoring app and does the first `npm install` + `npm run build` into an atomic
@@ -108,8 +109,11 @@ sudo reboot
 On reboot the device runs its startup automatically:
 - `bridge-box-root` (as root) brings up the hotspot, firewall/NAT, and sets the hostname to
   `bridge`.
-- `bridge-box-update` (as `bridgebox`) does a quick update check first (only if `wifi.json` is
-  present), **downloads** any newer app version, returns to the hotspot, and then starts the app.
+- `bridge-box-update` (as `bridgebox`) does a quick update check (only if `wifi.json` is present):
+  it activates any update that was built last session, **downloads** any newer version, and returns
+  to the hotspot. It does **not** run the app.
+- `bridge-box-app` runs the scoring app itself, supervised by the system — it starts at boot and is
+  automatically restarted if it ever stops.
 - `bridge-box-build` (as `bridgebox`) quietly builds a freshly-downloaded version in the background;
   that version goes live the **next** time the box is switched on.
 
@@ -118,11 +122,10 @@ How updates work (worth knowing):
   device that's unplugged and put away between sessions.
 - To keep switch-on-to-game fast, the update at boot only **downloads**; the slow build happens in
   the background afterwards and the new version is activated at the *next* boot. So a new release
-  lands one session after it's published. An offline box (no `wifi.json`) skips all this and boots
-  straight to the app.
-- If `wifi.json` is present, boot waits for the (bounded, max ~90s) update check before the app
-  appears. If the WiFi is flaky it gives up quickly and starts the app anyway — the app always
-  starts.
+  lands one session after it's published. An offline box (no `wifi.json`) skips all this.
+- The app runs as its own service, independent of the update check — so it comes up regardless of
+  whether WiFi is available, and the update's brief network switch happens at boot before anyone is
+  using the app (never mid-session).
 
 Give it a minute or two after boot to settle.
 
@@ -156,11 +159,11 @@ shows the running version/commit.
 > ```bash
 > sudo journalctl -u bridge-box-root -b
 > ```
-> **Hotspot is up but the page won't load?** Check the app log:
+> **Hotspot is up but the page won't load?** Check the app service:
 > ```bash
-> sudo journalctl -u bridge-box-update -b
-> pm2 status
-> pm2 logs bridge
+> bridge status
+> bridge logs
+> systemctl status bridge-box-app
 > ```
 
 ---
@@ -351,9 +354,10 @@ sudo apt-get -f install
 | Unit | Runs as | Purpose |
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
-| `bridge-box-update.service` | bridgebox | Boot: activate pending update, download new one, start app |
+| `bridge-box-app.service` | bridgebox | Runs the scoring app (auto-restarts if it stops) |
+| `bridge-box-update.service` | bridgebox | Boot: activate pending update + download a new one (no build) |
 | `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
-| `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: reload app if it's not responding |
+| `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: restart the app if it's not responding |
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
 **Handy commands**
@@ -361,7 +365,7 @@ A single `bridge` command wraps the common tasks — run `bridge help` for the f
 ones:
 
 ```bash
-bridge status        # is the app running? (PM2 status + health check)
+bridge status        # is the app running? (service status + health check)
 bridge logs          # follow the app logs (Ctrl-C to stop)
 bridge restart       # restart the app
 bridge update-now    # check for an app update now (goes live next switch-on)
@@ -381,7 +385,7 @@ bridge-box-update -b`).
 **Common issues**
 - *No hotspot after boot:* check `journalctl -u bridge-box-root -b`; ensure the Pi's OS uses
   NetworkManager and `wlan0` exists.
-- *Page won't load but hotspot works:* check `pm2 logs bridge` and `curl .../healthz` on the Pi.
+- *Page won't load but hotspot works:* check `bridge logs` (or `systemctl status bridge-box-app`) and `curl .../healthz` on the Pi.
 - *Update never happens:* verify `wifi.json` is valid JSON with a reachable network; the box only
   updates when it actually gets internet.
 - *App doesn't appear automatically (have to type `bridge.local`):* the captive portal may have

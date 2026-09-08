@@ -63,8 +63,8 @@ if [ -d "$CURRENT_LINK" ]; then
     echo "Rebuilding current release against Node $NEW..."
     RELEASE_PATH="$(readlink -f "$CURRENT_LINK")"
     if sudo -u bridgebox bash -c "cd '$RELEASE_PATH' && { [ -f package-lock.json ] && npm ci || npm install; } && npm run build"; then
-        echo "Rebuild OK. Reloading app..."
-        sudo -u bridgebox pm2 reload bridge --update-env || sudo -u bridgebox pm2 restart bridge --update-env || true
+        echo "Rebuild OK. Restarting app service..."
+        systemctl restart bridge-box-app.service || true
     else
         echo "WARNING: rebuild failed. The app may not run correctly on the new Node." >&2
         echo "Investigate before relying on this box." >&2

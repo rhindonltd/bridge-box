@@ -10,10 +10,7 @@ User=bridgebox
 # Low priority so a live game is not disturbed by the build.
 Nice=19
 IOSchedulingClass=idle
-# Don't reap the PM2 daemon when this oneshot exits.
-KillMode=process
 Environment=HOME=/home/bridgebox
-Environment=PM2_HOME=/home/bridgebox/.pm2
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal

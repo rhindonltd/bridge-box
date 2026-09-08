@@ -45,10 +45,9 @@ if check; then
     exit 0
 fi
 
-log "App not responding on :3000 — reloading via PM2."
-if pm2 reload bridge >/dev/null 2>&1; then
-    log "pm2 reload issued."
+log "App not responding on :3000 — restarting bridge-box-app.service."
+if sudo -n /usr/local/bridgebox/bin/restart-app.sh >/dev/null 2>&1; then
+    log "app service restart issued."
 else
-    log "pm2 reload failed — attempting restart."
-    pm2 restart bridge >/dev/null 2>&1 || log "pm2 restart also failed."
+    log "app service restart failed (sudo helper)."
 fi

@@ -47,18 +47,17 @@ curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 node --version
 
-# Install PM2 globally if not installed
-if ! command -v pm2 &> /dev/null; then
-  echo "Installing PM2..."
-  sudo npm install -g pm2
-fi
+# NOTE: PM2 is intentionally NOT used. The app runs as a native systemd service
+# (bridge-box-app.service) supervised directly by systemd (Restart=always).
 
 # --- 3. Configure sudo scripts ---
 sudo mkdir -p /usr/local/bridgebox/bin
 
-sudo tee /usr/local/bridgebox/bin/restart-service.sh > /dev/null <<'EOF'
+# Lets bridgebox restart the app service (used by Phase 3 activation and the
+# health check) without broad systemctl rights.
+sudo tee /usr/local/bridgebox/bin/restart-app.sh > /dev/null <<'EOF'
 #!/bin/bash
-exec /bin/systemctl restart bridge-box-update.service
+exec /bin/systemctl restart bridge-box-app.service
 EOF
 
 sudo tee /usr/local/bridgebox/bin/reboot.sh > /dev/null <<'EOF'
@@ -87,7 +86,7 @@ sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
 SUDOERS_FILE="/etc/sudoers.d/bridgebox"
 sudo bash -c "cat > $SUDOERS_FILE" <<EOF
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-service.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-app.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh connect
@@ -144,6 +143,7 @@ mkdir -p "$INSTALL_DIR/backups"
 # --- 7. Install systemd services and timers ---
 echo "Installing systemd service files..."
 sudo cp "$BOX_DIR/bridge-box-root.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-app.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-update.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-build.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
@@ -163,10 +163,11 @@ if [ ! -e "$CURRENT_LINK" ]; then
 fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable bridge-box-root bridge-box-update bridge-box-build
+sudo systemctl enable bridge-box-root bridge-box-update bridge-box-build bridge-box-app
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
 sudo systemctl start bridge-box-root
 sudo systemctl start bridge-box-update
+sudo systemctl start bridge-box-app          # native systemd app service
 # bridge-box-build runs after update; enabling is enough (it fires at boot).
 sudo systemctl start bridge-box-healthcheck.timer
 sudo systemctl start bridge-box-backup.timer

@@ -3,9 +3,8 @@
 # Installed as /usr/local/bin/bridge (see install.sh). Usage: `bridge <command>`.
 #
 # Design notes:
-# - App/PM2 commands run as the `bridgebox` user with HOME/PM2_HOME set, because
-#   PM2 is per-user and the app runs under bridgebox's PM2 daemon (running them
-#   as root or another user would show an empty/ different PM2).
+# - The app runs as a native systemd service (bridge-box-app.service); status
+#   and logs come from systemctl/journalctl. No PM2.
 # - Commands that touch the system (apt, systemctl, reboot) use sudo.
 # - This is a thin dispatcher over the existing scripts/units — one source of
 #   truth, easy to extend.
@@ -14,33 +13,28 @@ set -uo pipefail
 
 BOX_DIR="/home/bridgebox/bridge-box"
 INSTALL_DIR="/home/bridgebox"
-
-# Run a command as the bridgebox user with PM2's environment set.
-as_bridgebox() {
-    sudo -u bridgebox env HOME="$INSTALL_DIR" PM2_HOME="$INSTALL_DIR/.pm2" \
-        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"
-}
+APP_UNIT="bridge-box-app.service"
 
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
   status)
-    echo "== PM2 =="
-    as_bridgebox pm2 status
+    echo "== App service =="
+    systemctl status "$APP_UNIT" --no-pager -n 0 2>/dev/null | head -n 5
     echo
     echo "== App health =="
     curl -fsS http://localhost:3000/healthz && echo || echo "healthz not responding"
     ;;
 
   logs)
-    # Follow the app logs. Pass extra args through (e.g. `bridge logs --lines 100`).
-    as_bridgebox pm2 logs bridge "$@"
+    # Follow the app logs. Pass extra args through (e.g. `bridge logs -n 100`).
+    exec sudo journalctl -u "$APP_UNIT" -f "$@"
     ;;
 
   restart)
-    echo "Restarting the app (re-runs boot update/start flow)..."
-    sudo systemctl restart bridge-box-update
+    echo "Restarting the app..."
+    sudo systemctl restart "$APP_UNIT"
     ;;
 
   update-now)
@@ -61,6 +55,54 @@ case "$cmd" in
 
   node-upgrade)
     exec sudo "$BOX_DIR/bridge-box-node-upgrade.sh" "$@"
+    ;;
+
+  cleanup-pm2)
+    # One-off migration cleanup for a box that ran the old PM2-based system.
+    # Idempotent and safe on a box that never had PM2. Removes the orphaned PM2
+    # daemon/state, the global pm2 package, any pm2 boot unit, and the stale
+    # restart-service.sh helper. Does NOT touch the new systemd app service.
+    echo "Cleaning up old PM2-based system (safe to run more than once)..."
+
+    if command -v pm2 >/dev/null 2>&1; then
+        echo "- Killing any running PM2 daemon (as bridgebox)..."
+        sudo -u bridgebox env HOME=/home/bridgebox PM2_HOME=/home/bridgebox/.pm2 pm2 kill >/dev/null 2>&1 || true
+    else
+        echo "- pm2 not installed; nothing to kill."
+    fi
+
+    if [ -d /home/bridgebox/.pm2 ]; then
+        echo "- Removing /home/bridgebox/.pm2 (PM2 state/logs)..."
+        sudo rm -rf /home/bridgebox/.pm2
+    else
+        echo "- No /home/bridgebox/.pm2; skipping."
+    fi
+
+    if systemctl list-unit-files 2>/dev/null | grep -qi '^pm2-'; then
+        unit=$(systemctl list-unit-files 2>/dev/null | grep -i '^pm2-' | awk '{print $1}' | head -n1)
+        echo "- Disabling/removing PM2 boot unit ($unit)..."
+        sudo systemctl disable --now "$unit" 2>/dev/null || true
+        sudo rm -f "/etc/systemd/system/$unit"
+        sudo systemctl daemon-reload
+    else
+        echo "- No pm2 boot unit; skipping."
+    fi
+
+    if npm ls -g --depth=0 pm2 >/dev/null 2>&1; then
+        echo "- Uninstalling global pm2 npm package..."
+        sudo npm uninstall -g pm2 >/dev/null 2>&1 || true
+    else
+        echo "- Global pm2 package not present; skipping."
+    fi
+
+    if [ -e /usr/local/bridgebox/bin/restart-service.sh ]; then
+        echo "- Removing stale restart-service.sh sudo helper..."
+        sudo rm -f /usr/local/bridgebox/bin/restart-service.sh
+    else
+        echo "- No stale restart-service.sh; skipping."
+    fi
+
+    echo "Cleanup complete. The app runs under bridge-box-app.service now — check: bridge status"
     ;;
 
   backup-now)
@@ -106,12 +148,13 @@ case "$cmd" in
     cat <<'EOF'
 BridgeBox admin — usage: bridge <command>
 
-  status        Show app (PM2) status and health check
+  status        Show app service status and health check
   logs          Follow the app logs (Ctrl-C to stop)
-  restart       Restart the app (re-runs the boot update/start flow)
+  restart       Restart the app
   update-now    Check for an app update now (activates on next switch-on)
   os-update     Apply OS security updates (switches to WiFi, then back)
   node-upgrade  Upgrade Node.js to a new major, e.g. bridge node-upgrade 24
+  cleanup-pm2   One-off: remove leftovers from the old PM2-based system
   backup-now    Take a data backup now
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]
