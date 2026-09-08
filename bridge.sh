@@ -45,8 +45,13 @@ case "$cmd" in
 
   update-now)
     echo "Checking for an app update now (downloads; builds in background; live next boot)..."
+    # Run strictly sequentially and wait for each to finish, so the download and
+    # the build never overlap (they share the network lock and the radio, and
+    # overlapping runs cause NetworkManager 'activation enqueued' errors).
+    # `restart` on the oneshot update service blocks until it completes; then run
+    # the build to completion with --wait.
     sudo systemctl restart bridge-box-update
-    sudo systemctl start bridge-box-build
+    sudo systemctl start --wait bridge-box-build
     echo "Done. The new version (if any) activates on next switch-on."
     ;;
 
