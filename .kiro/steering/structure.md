@@ -71,24 +71,35 @@ Also installed system-wide:
 Updates are tied to the **power cycle**, not a schedule (the box lives in a cupboard between
 sessions, so timers are useless; and the director just unplugs it, so there's no end-of-session
 action). The design keeps switch-on-to-game fast while still updating:
-- **Phase 1 — boot, before the app starts (network):** if `wifi.json` exists, connect to the club
-  WiFi (fast-fail, hard 90s deadline), compare the pinned `RELEASE_REF` to the **newest downloaded**
-  release (not just `current`, so an un-activated download isn't re-fetched), `git clone`+checkout a
-  newer release if any, mark it `.needs_build`, return to hotspot. **Download only — no build.** No
-  `wifi.json` → skip instantly. (The app itself is started separately by `bridge-box-app.service`.)
-- **Phase 2 — background, after boot (`bridge-box-build.service`, no network):** low-priority
-  `npm ci`+build of the `.needs_build` release; on success mark `.built` and set `pending`; on
-  failure discard. Never touches the running app.
+- **Phase 1 — boot, online (network):** if `wifi.json` exists, connect to the club WiFi, compare the
+  pinned `RELEASE_REF` to the **newest downloaded** release (not just `current`), and if newer:
+  `git clone`+checkout, deploy `.env`, and **run `npm ci` WHILE ONLINE** (a new release may change
+  dependencies, and Phase 2 has no network — so deps MUST be fetched here). Only after deps install
+  does it mark `.needs_build`, then return to hotspot. Bounded by a generous deadline (`PHASE1_DEADLINE`,
+  ~15 min) since `npm ci` on a Pi is slow and nothing user-facing waits on it (the app is its own
+  service). No `wifi.json` → skip instantly.
+- **Phase 2 — background, after boot (`bridge-box-build.service`, NO network):** low-priority
+  **`npm run build` only** (pure CPU — deps are already installed by Phase 1). On success mark
+  `.built` and set `pending`; if `node_modules` is missing (Phase 1 didn't finish), it discards the
+  release so Phase 1 re-downloads+installs next boot. Never touches the running app.
 - **Phase 3 — next boot, before the app service starts:** if a `.built` `pending` release exists,
   atomically point `current` at it (old → `previous`), clear `pending`, and `systemctl restart
   bridge-box-app` so it runs the new code. (`bridge-box-update` is ordered `Before=bridge-box-app`.)
 
-Net effect: download this session → build in background this session → activate next session. Boot
+**Future direction (Option D — not yet implemented):** move the build to **CI** and have the box
+download a **prebuilt, compiled artifact** (tarball/release) instead of building on-device. This
+eliminates on-device `npm ci`/`npm run build`/`tsx` entirely — faster, more reliable boots, no
+compiler/toolchain on the appliance, and Phase 1 becomes a simple "download + verify + set pending"
+with Phase 2 dropped. The current on-device build (Option A) is the interim approach; keep changes
+compatible with a later switch to downloading artifacts (the atomic release + `current`/`pending`
+symlink model already fits this).
+
+Net effect: download+install this session → build in background this session → activate next session. Boot
 is fast (no build on the critical path), no WiFi switching while the app runs, and a plug-pull at
 any point is harmless (only `pending`/marker flips are load-bearing; `current` is only ever moved
 at the very start of a boot). Invariants to preserve:
 - The app's availability is owned by `bridge-box-app.service` (Restart=always), independent of the update flow — the update run can fail entirely and the app keeps serving.
-- Never build in `bridge-box-update.sh`; never do network in `bridge-box-build.sh`.
+- Never `npm run build` in Phase 1; never do network (`npm ci`, git, WiFi) in `bridge-box-build.sh` (Phase 2 has no network). All network-dependent steps — clone AND `npm ci` — live in Phase 1.
 - Only advance `current` via Phase 3 at boot start; never swap it mid-session.
 
 ## Design decisions & policies
