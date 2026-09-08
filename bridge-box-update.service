@@ -1,23 +1,16 @@
 [Unit]
-Description=BridgeBox App Update and PM2
+Description=BridgeBox App Update (download only)
 After=bridge-box-root.service
 Requires=bridge-box-root.service
+# Run before the app service so a pending release is activated before the app
+# starts, and the boot download happens before anyone is using the app.
+Before=bridge-box-app.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
 ExecStart=/home/bridgebox/bridge-box/bridge-box-update.sh
 User=bridgebox
-# KillMode=process is ESSENTIAL: this script launches the PM2 daemon (which
-# double-forks into the background) and then exits. With the default KillMode
-# systemd would reap the whole cgroup when the script exits, killing PM2 and the
-# app — the app would "start" then vanish ("Deactivated successfully", empty
-# pm2 list). KillMode=process kills only the main script on stop, leaving PM2
-# (and the app) running.
-KillMode=process
-# HOME/PM2_HOME so PM2 uses /home/bridgebox/.pm2 for its daemon/state/logs.
 Environment=HOME=/home/bridgebox
-Environment=PM2_HOME=/home/bridgebox/.pm2
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal

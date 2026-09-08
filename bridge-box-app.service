@@ -1,0 +1,26 @@
+[Unit]
+Description=BridgeBox Scorer App
+# Start after the network/hotspot is up, but do NOT hard-require it: the app
+# must run even if networking is odd (it only binds a local port).
+After=bridge-box-root.service network.target
+Wants=bridge-box-root.service
+
+[Service]
+Type=simple
+User=bridgebox
+WorkingDirectory=/home/bridgebox/bridge-box-scorer/current
+ExecStart=/bin/bash /home/bridgebox/bridge-box/bridge-box-app-launch.sh
+# systemd supervises the app directly — restart it if it ever exits.
+Restart=always
+RestartSec=3
+Environment=HOME=/home/bridgebox
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=0.0.0.0
+Environment=DATABASE_URL=/home/bridgebox/data
+Environment=DATABASE_GAMES_URL=/home/bridgebox/data/games
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

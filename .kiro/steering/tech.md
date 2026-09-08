@@ -3,13 +3,13 @@
 ## Platform
 - **Target hardware**: Raspberry Pi running Debian/Raspberry Pi OS (`apt`, `systemd`, `nmcli`/NetworkManager).
 - **Runtime**: Node.js LTS from the NodeSource apt repo, pinned to a major line via `NODE_MAJOR` in `install.sh` (default 24). `apt upgrade` stays within the major; major upgrades are a manual step (`bridge-box-node-upgrade.sh`).
-- **Process manager**: PM2 (installed globally), running the app as a process named `bridge`.
-- **App server**: The scorer app (separate `bridge-box-scorer` repo) is a Next.js app started with `npm start`, listening on port `3000`.
+- **Process supervision**: native **systemd** service `bridge-box-app.service` (`Restart=always`) — no PM2.
+- **App server**: The scorer app (separate `bridge-box-scorer` repo) is a Next.js + Socket.IO app; production entrypoint is `node dist/server.js` (falls back to `tsx server.ts`), listening on port `3000`.
 
 ## Languages
 - **Bash** — all provisioning, networking, and update logic lives in shell scripts.
-- **JavaScript (ESM)** — `main-app.js` is a small launcher; the actual app is external.
-- **JSON** — config (`pm2.json`, `wifi.json`).
+- **JavaScript** — the app is external (`bridge-box-scorer`); this repo is shell + systemd units.
+- **JSON** — config (`wifi.json`, etc.).
 
 ## System tooling relied on
 - `nmcli` (NetworkManager) for the WiFi hotspot and client connections.
@@ -39,11 +39,11 @@ sudo journalctl -u bridge-box-root -f       # follow root/network setup logs
 sudo journalctl -u bridge-box-update -f     # follow app/update logs
 ```
 
-App / PM2 (as the `bridgebox` user):
+App service:
 ```bash
-pm2 status
-pm2 logs bridge
-pm2 reload bridge     # zero-downtime reload
+bridge status                 # or: systemctl status bridge-box-app
+bridge logs                   # or: journalctl -u bridge-box-app -f
+bridge restart                # or: sudo systemctl restart bridge-box-app
 ```
 
-Logs on device: `/home/bridgebox/root.log`, `/home/bridgebox/update.log`.
+Logs on device: `/home/bridgebox/{root,update,build,healthcheck,backup}.log`; app logs via `journalctl -u bridge-box-app`.
