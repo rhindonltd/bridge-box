@@ -15,6 +15,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 - `bridge-box-node-upgrade.sh` — **Manual**, admin-run Node.js **major** upgrade (e.g. 22 → 24). Re-points the NodeSource apt repo to a new major and rebuilds the current release against it. See Node policy below. Also auto-switches to client WiFi via the lib.
 - `bridge-box-healthcheck.service` / `.timer` / `bridge-box-healthcheck.sh` — Periodic watchdog (every ~2 min) that curls the app on `:3000` (health endpoint if available, else root URL) and `pm2 reload`s it if unresponsive. Catches the "hung but alive" case PM2 alone misses.
 - `bridge-box-backup.service` / `.timer` / `bridge-box-backup.sh` — Hourly SQLite online backup (`sqlite3 .backup`) of **all** databases found recursively under `data/` (the app uses multiple: game-index, per-game, player, settings), preferring a mounted USB stick under `/media/bridgebox`, else `backups/`. Backup filenames encode the relative path so per-game DBs in subdirs don't collide; retains the newest N per database.
+- `bridge.sh` — Admin CLI dispatcher, installed as `/usr/local/bin/bridge` (symlink). Subcommands (`status`, `logs`, `restart`, `update-now`, `os-update`, `node-upgrade`, `backup-now`, `version`, `wifi`, `password`, `reboot`, `help`) are thin wrappers over the scripts/units. App/PM2 subcommands run as `bridgebox` with `HOME`/`PM2_HOME` set; system ones use sudo. Add new common tasks here rather than making users memorise long paths.
 - `bridge-box-deploy-env.sh` — Drops the scorer `.env` into a release dir before building (box-local `scorer.env` if present, else `scorer.env.template`) and ensures `data/`+`data/games/` exist. Called by `install.sh` and `bridge-box-build.sh` before their builds. Single source of truth for supplying build-time env.
 - `scorer.env.template` — Template `.env` for the scorer app (gitignored in that repo but needed at build time). Absolute DB paths only; no `NEXT_PUBLIC_APP_URL` (the app uses same-origin for sockets).
 - `main-app.js` — Minimal ESM launcher that runs `npm start` for the scorer app. Referenced by `pm2.json`.
@@ -55,6 +56,7 @@ USB backups (when a stick is mounted): `/media/bridgebox/<mount>/bridge-box-back
 Also installed system-wide:
 - `/etc/systemd/system/bridge-box-{root,update,build}.service`
 - `/etc/systemd/system/bridge-box-{healthcheck,backup}.service` and `.timer`
+- `/usr/local/bin/bridge` (symlink to `bridge.sh`) — the admin CLI
 - `/usr/local/bridgebox/bin/{restart-service,reboot,apply-nat}.sh` (root-owned, invoked via sudoers)
 - `/etc/sudoers.d/bridgebox`
 - `/etc/NetworkManager/dnsmasq-shared.d/010-bridgebox-captive.conf` (captive-portal DNS drop-in)
