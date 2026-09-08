@@ -46,7 +46,10 @@ bb_acquire_lock() {
 # Return the device to hotspot mode and re-assert NAT. Idempotent.
 bb_return_to_hotspot() {
     echo "Returning to hotspot mode..."
+    # Drop any client connection and re-enable the hotspot's autoconnect (we
+    # disable it in bb_connect_wifi so it doesn't steal the radio mid-connect).
     nmcli device disconnect "$BB_IFACE" 2>/dev/null || true
+    nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect yes 2>/dev/null || true
     if ! nmcli connection up "$BB_HOTSPOT_CONNECTION" 2>/dev/null; then
         echo "WARNING: failed to bring hotspot '$BB_HOTSPOT_CONNECTION' up."
     fi
@@ -79,6 +82,21 @@ bb_connect_wifi() {
         echo "wifi.json missing ssid or password."
         return 1
     fi
+
+    # Free wlan0 from hotspot/AP mode first. A single WiFi radio can't run as an
+    # access point AND scan for/join a client network at the same time — leaving
+    # the hotspot up is why a client connect fails with "No network with SSID
+    # found". bb_return_to_hotspot (via the caller's trap) brings it back after.
+    # The hotspot profile has high autoconnect priority, so we must disable its
+    # autoconnect while in client mode or NM will immediately re-raise it and
+    # steal the radio back. bb_return_to_hotspot re-enables + brings it up.
+    echo "Taking hotspot down so wlan0 can join a client network..."
+    timeout "$BB_NMCLI_TIMEOUT" nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect no 2>/dev/null || true
+    timeout "$BB_NMCLI_TIMEOUT" nmcli connection down "$BB_HOTSPOT_CONNECTION" 2>/dev/null || true
+    # Give the radio a moment to leave AP mode and be ready to scan.
+    sleep 2
+    timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$BB_IFACE" 2>/dev/null || true
+    sleep 2
 
     _bb_try() {
         local h="$1"
