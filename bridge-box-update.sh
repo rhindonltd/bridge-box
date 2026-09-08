@@ -108,6 +108,12 @@ APP_STARTED=0
 start_app() {
     [ "$APP_STARTED" = "1" ] && return 0
     APP_STARTED=1
+    # Release the network lock BEFORE starting PM2. The lock only guards the
+    # network-switching phase (done by now). If we hold it while launching the
+    # app, PM2's daemon inherits fd 9 and holds the lock forever, so every later
+    # run sees a phantom "another run in progress". Release + close fd 9 here.
+    flock -u 9 2>/dev/null || true
+    exec 9>&- 2>/dev/null || true
     export APP_COMMIT="$(resolve_commit)"
     export NODE_ENV=production
     local rel
