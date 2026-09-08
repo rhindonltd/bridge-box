@@ -70,6 +70,18 @@ if ! flock -n 9; then
     exit 0
 fi
 
+# Guarantee we ALWAYS return to hotspot mode, however the script exits after
+# this point (deadline kill, unexpected error, etc.). Only arm the trap once we
+# hold the lock and are about to touch the network. HOTSPOT_RESTORED guards
+# against running it twice (explicit call at the end + this trap).
+HOTSPOT_RESTORED=0
+restore_hotspot_once() {
+    [ "$HOTSPOT_RESTORED" = "1" ] && return 0
+    HOTSPOT_RESTORED=1
+    bb_return_to_hotspot
+}
+trap restore_hotspot_once EXIT
+
 # =====================================================================
 # PHASE 3 — activate a pending, fully-built release, then restart the app
 # =====================================================================
@@ -145,7 +157,8 @@ while kill -0 "$NP_PID" 2>/dev/null; do
 done
 wait "$NP_PID" 2>/dev/null || true
 
-# Always return to hotspot at the end (network phase may have switched wlan0).
-bb_return_to_hotspot
+# Return to hotspot now (the EXIT trap also guarantees it if we somehow don't
+# reach here).
+restore_hotspot_once
 echo "=== BridgeBox update done $(date -Is) ==="
 exit 0
