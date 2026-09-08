@@ -29,9 +29,27 @@ hotspot_down_for_client() {
     # steals the single radio back before we can join a client network.
     timeout "$NMCLI_TIMEOUT" nmcli connection modify "$HOTSPOT_CONNECTION" connection.autoconnect no 2>/dev/null || true
     timeout "$NMCLI_TIMEOUT" nmcli connection down "$HOTSPOT_CONNECTION" 2>/dev/null || true
-    sleep 2
-    timeout "$NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$IFACE" 2>/dev/null || true
-    sleep 2
+    # The Pi's Broadcom WiFi (brcmfmac) needs time to leave AP mode before it can
+    # scan reliably — scanning too soon causes "brcmf_escan_timeout" and a failed
+    # scan (which surfaces as "No network with SSID found"). Give it a generous
+    # settle before the first scan.
+    sleep 5
+}
+
+# Rescan and wait until $1 (an SSID) appears, up to ~N tries. Returns 0 if seen.
+# Works around transient brcmfmac escan timeouts by retrying the scan.
+wait_for_ssid() {
+    local want="$1" tries=6 i
+    for (( i=1; i<=tries; i++ )); do
+        timeout "$NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$IFACE" 2>/dev/null || true
+        sleep 3
+        if nmcli -t -f SSID device wifi list ifname "$IFACE" 2>/dev/null | grep -Fxq "$want"; then
+            echo "wifi-ctl: SSID '$want' visible (scan $i)"
+            return 0
+        fi
+        echo "wifi-ctl: SSID '$want' not yet visible (scan $i/$tries)"
+    done
+    return 1
 }
 
 connect_client() {
@@ -84,8 +102,13 @@ connect_client() {
 
     echo "wifi-ctl: connecting to $ssid"
     if [ "$hidden" = "yes" ]; then
+        # Hidden networks don't show in scans — connect directly (with retry).
         _try yes || _try no
     else
+        # Wait until the SSID actually appears (handles brcmfmac scan timeouts)
+        # before attempting to connect; fall back to trying anyway if the scan
+        # never surfaces it (e.g. driver hiccup) rather than giving up outright.
+        wait_for_ssid "$ssid" || echo "wifi-ctl: SSID never appeared in scans; trying connect anyway"
         _try no || _try yes
     fi
 }
