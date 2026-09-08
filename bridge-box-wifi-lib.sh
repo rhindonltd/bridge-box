@@ -28,6 +28,14 @@ BB_HOTSPOT_CONNECTION="${BB_HOTSPOT_CONNECTION:-bridge-hotspot}"
 BB_NMCLI_TIMEOUT="${BB_NMCLI_TIMEOUT:-60}"
 BB_PING_TIMEOUT="${BB_PING_TIMEOUT:-15}"
 BB_LOCKFILE="${BB_LOCKFILE:-$BB_INSTALL_DIR/.update.lock}"
+# Fixed-path root helper for privileged nmcli ops (used when we're NOT root,
+# i.e. the boot update service running as bridgebox). Invoked via sudoers.
+BB_WIFI_CTL="/usr/local/bridgebox/bin/wifi-ctl.sh"
+
+# Are we running as root? os-update / node-upgrade run under sudo (root) and can
+# drive nmcli directly; the boot update service runs as bridgebox and must route
+# privileged operations through the sudo helper.
+_bb_is_root() { [ "$(id -u)" -eq 0 ]; }
 
 # Acquire the shared network lock so this run can't race bridge-box-update.sh
 # (or another maintenance run) while any of them switch wlan0. Waits up to
@@ -44,14 +52,19 @@ bb_acquire_lock() {
 }
 
 # Return the device to hotspot mode and re-assert NAT. Idempotent.
+# Root path drives nmcli directly; non-root routes through the sudo helper.
 bb_return_to_hotspot() {
     echo "Returning to hotspot mode..."
-    # Drop any client connection and re-enable the hotspot's autoconnect (we
-    # disable it in bb_connect_wifi so it doesn't steal the radio mid-connect).
-    nmcli device disconnect "$BB_IFACE" 2>/dev/null || true
-    nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect yes 2>/dev/null || true
-    if ! nmcli connection up "$BB_HOTSPOT_CONNECTION" 2>/dev/null; then
-        echo "WARNING: failed to bring hotspot '$BB_HOTSPOT_CONNECTION' up."
+    if _bb_is_root; then
+        nmcli device disconnect "$BB_IFACE" 2>/dev/null || true
+        nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect yes 2>/dev/null || true
+        if ! nmcli connection up "$BB_HOTSPOT_CONNECTION" 2>/dev/null; then
+            echo "WARNING: failed to bring hotspot '$BB_HOTSPOT_CONNECTION' up."
+        fi
+    else
+        if ! sudo -n "$BB_WIFI_CTL" hotspot; then
+            echo "WARNING: wifi-ctl hotspot failed (could not restore hotspot)."
+        fi
     fi
     # Re-assert port redirects; switching wlan0 can drop NM's rebuilt NAT rules.
     if ! sudo -n /usr/local/bridgebox/bin/apply-nat.sh 2>/dev/null; then
@@ -73,6 +86,18 @@ bb_connect_wifi() {
         return 1
     fi
 
+    # Non-root (the boot update service, run as bridgebox) can't drive NM
+    # directly — delegate the privileged connect to the root sudo helper, which
+    # reads wifi.json itself (no secrets on the command line).
+    if ! _bb_is_root; then
+        # sudo strips the environment, so the helper uses its own defaults for
+        # iface/hotspot (which match ours). It reads wifi.json itself.
+        echo "Connecting via privileged helper (running as $(id -un))..."
+        sudo -n "$BB_WIFI_CTL" connect
+        return $?
+    fi
+
+    # Root path (os-update / node-upgrade under sudo): drive nmcli directly.
     local ssid password hidden
     ssid=$(jq -r '.ssid // empty' "$BB_WIFI_CONFIG")
     password=$(jq -r '.password // empty' "$BB_WIFI_CONFIG")
@@ -84,16 +109,12 @@ bb_connect_wifi() {
     fi
 
     # Free wlan0 from hotspot/AP mode first. A single WiFi radio can't run as an
-    # access point AND scan for/join a client network at the same time — leaving
-    # the hotspot up is why a client connect fails with "No network with SSID
-    # found". bb_return_to_hotspot (via the caller's trap) brings it back after.
-    # The hotspot profile has high autoconnect priority, so we must disable its
-    # autoconnect while in client mode or NM will immediately re-raise it and
-    # steal the radio back. bb_return_to_hotspot re-enables + brings it up.
+    # access point AND scan for/join a client network at the same time. Disable
+    # the hotspot's (high-priority) autoconnect so NM can't re-raise it and steal
+    # the radio; bb_return_to_hotspot re-enables it.
     echo "Taking hotspot down so wlan0 can join a client network..."
     timeout "$BB_NMCLI_TIMEOUT" nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect no 2>/dev/null || true
     timeout "$BB_NMCLI_TIMEOUT" nmcli connection down "$BB_HOTSPOT_CONNECTION" 2>/dev/null || true
-    # Give the radio a moment to leave AP mode and be ready to scan.
     sleep 2
     timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$BB_IFACE" 2>/dev/null || true
     sleep 2
