@@ -4,10 +4,14 @@ After=network.target
 Before=bridge-box-update.service
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/home/bridgebox/bridge-box/bridge-box-root.sh
 User=root
-Restart=on-failure
+# Run-once network setup. Do NOT auto-restart on failure: it deletes+recreates
+# the hotspot each run, so restart-on-failure caused a delete/recreate loop that
+# thrashed the single radio (and cascaded into the update service). If it fails,
+# it fails once and logs; the script itself retries the hotspot bring-up.
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
