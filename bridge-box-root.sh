@@ -23,8 +23,9 @@ NEW_HOSTNAME="bridge"
 
 echo "=== BridgeBox root setup ==="
 
-# Delete old hotspot if exists
-nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
+# Give NetworkManager/the radio a moment to be ready at boot before we touch it.
+nmcli networking connectivity check >/dev/null 2>&1 || true
+sleep 3
 
 # Hotspot setup
 MAC=$(cat /sys/class/net/$IFACE/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
@@ -48,10 +49,34 @@ CREDS_FILE="/home/bridgebox/hotspot-credentials.txt"
 chown bridgebox:bridgebox "$CREDS_FILE" 2>/dev/null || true
 chmod 644 "$CREDS_FILE"
 
-nmcli device wifi hotspot ifname "$IFACE" con-name "$CONNECTION_NAME" ssid "$HOTSPOT_SSID" password "$HOTSPOT_PASS"
-nmcli connection modify "$CONNECTION_NAME" ipv4.method shared connection.autoconnect yes connection.autoconnect-priority 100
-
-echo "Hotspot '$HOTSPOT_SSID' active."
+# Bring the hotspot up, with retries. Don't let a single transient nmcli error
+# (e.g. "active connection disappeared" from the radio still settling) abort the
+# whole script — that used to fail the unit and, with restart-on-failure, spin.
+bring_up_hotspot() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        # (Re)create only if it doesn't already exist / previous attempt failed.
+        if ! nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$CONNECTION_NAME"; then
+            nmcli device wifi hotspot ifname "$IFACE" con-name "$CONNECTION_NAME" \
+                ssid "$HOTSPOT_SSID" password "$HOTSPOT_PASS" 2>&1 || true
+            nmcli connection modify "$CONNECTION_NAME" ipv4.method shared \
+                connection.autoconnect yes connection.autoconnect-priority 100 2>&1 || true
+        fi
+        # Confirm it's actually active.
+        sleep 2
+        if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
+            echo "Hotspot '$HOTSPOT_SSID' is active (attempt $attempt)."
+            return 0
+        fi
+        echo "Hotspot not active yet (attempt $attempt) — retrying..."
+        # Clear a half-made connection before the next attempt.
+        nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
+        sleep 3
+    done
+    echo "WARNING: could not bring hotspot up after retries."
+    return 1
+}
+bring_up_hotspot || true
 
 # Enable IP forwarding
 sysctl -w net.ipv4.ip_forward=1
