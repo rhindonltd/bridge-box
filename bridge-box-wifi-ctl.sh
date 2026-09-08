@@ -51,14 +51,35 @@ connect_client() {
 
     hotspot_down_for_client
 
-    _try() {
+    # Wait for NetworkManager to be ready and wlan0 to be free, so we don't hit
+    # "New connection activation was enqueued" from a still-settling radio.
+    timeout "$NMCLI_TIMEOUT" nmcli networking connectivity check >/dev/null 2>&1 || true
+    local waited=0
+    while [ "$waited" -lt 10 ]; do
+        state=$(nmcli -t -f GENERAL.STATE device show "$IFACE" 2>/dev/null | head -n1)
+        case "$state" in *connecting*|*deactivating*) ;; *) break;; esac
+        sleep 1; waited=$((waited + 1))
+    done
+
+    # Connect WITHOUT deleting first (non-destructive): nmcli reuses/updates any
+    # existing saved profile. Only if that fails do we delete the (possibly
+    # stale) profile and retry once — so we never throw away a working profile
+    # unless we're immediately recreating it. This avoids the "deleted then
+    # failed -> box lost its WiFi" footgun.
+    _connect() {
         local h="$1"
-        timeout "$NMCLI_TIMEOUT" nmcli connection delete "$ssid" 2>/dev/null || true
         if [ "$h" = "yes" ]; then
             timeout "$NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password" hidden yes
         else
             timeout "$NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password"
         fi
+    }
+    _try() {
+        local h="$1"
+        _connect "$h" && return 0
+        echo "wifi-ctl: first attempt (hidden=$h) failed; clearing stale profile and retrying once"
+        timeout "$NMCLI_TIMEOUT" nmcli connection delete "$ssid" 2>/dev/null || true
+        _connect "$h"
     }
 
     echo "wifi-ctl: connecting to $ssid"

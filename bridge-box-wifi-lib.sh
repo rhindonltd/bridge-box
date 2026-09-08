@@ -119,14 +119,23 @@ bb_connect_wifi() {
     timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$BB_IFACE" 2>/dev/null || true
     sleep 2
 
-    _bb_try() {
+    # Non-destructive: connect first (reuses/updates any saved profile); only
+    # delete + retry if that fails, so a transient failure never leaves the box
+    # with no profile AND not connected.
+    _bb_connect() {
         local h="$1"
-        timeout "$BB_NMCLI_TIMEOUT" nmcli connection delete "$ssid" 2>/dev/null || true
         if [ "$h" = "yes" ]; then
             timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password" hidden yes
         else
             timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password"
         fi
+    }
+    _bb_try() {
+        local h="$1"
+        _bb_connect "$h" && return 0
+        echo "First attempt (hidden=$h) failed; clearing stale profile and retrying once."
+        timeout "$BB_NMCLI_TIMEOUT" nmcli connection delete "$ssid" 2>/dev/null || true
+        _bb_connect "$h"
     }
 
     echo "Connecting to WiFi: $ssid"
