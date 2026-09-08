@@ -357,17 +357,26 @@ sudo apt-get -f install
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
 **Handy commands**
+A single `bridge` command wraps the common tasks — run `bridge help` for the full list. The main
+ones:
+
 ```bash
-pm2 status                              # is the app running?
-pm2 logs bridge                         # app logs
-curl -f http://localhost:3000/healthz   # health + running version
-sudo systemctl restart bridge-box-update   # re-run the boot update/download + app start
-sudo journalctl -u bridge-box-root -b       # boot-time network setup log
-sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh      # manual OS security updates
-sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 24  # move to a new Node major
-node --version                              # which Node the box is running
-cat /home/bridgebox/hotspot-credentials.txt # this box's hotspot SSID + password
+bridge status        # is the app running? (PM2 status + health check)
+bridge logs          # follow the app logs (Ctrl-C to stop)
+bridge restart       # restart the app
+bridge update-now    # check for an app update now (goes live next switch-on)
+bridge os-update     # apply OS security updates (switches to WiFi, then back)
+bridge node-upgrade 24   # move Node.js to a new major version
+bridge backup-now    # take a data backup now
+bridge version       # show the running app version
+bridge wifi          # show WiFi config (or: bridge wifi <ssid> <password> [hidden])
+bridge password      # show this box's hotspot SSID + password
+bridge reboot        # reboot the box
 ```
+
+These are thin wrappers over the underlying scripts/services — you can still call those directly if
+you prefer (e.g. `sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh`, `journalctl -u
+bridge-box-update -b`).
 
 **Common issues**
 - *No hotspot after boot:* check `journalctl -u bridge-box-root -b`; ensure the Pi's OS uses

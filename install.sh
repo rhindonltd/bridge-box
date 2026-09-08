@@ -110,6 +110,12 @@ chmod +x "$BOX_DIR"/*.sh
 # so the calls below and the systemd services work regardless of checkout OS.
 sed -i 's/\r$//' "$BOX_DIR"/*.sh 2>/dev/null || true
 
+# Install the `bridge` admin command into PATH. Symlink to the repo copy so it
+# stays current when the repo updates. Admins then run e.g. `bridge status`,
+# `bridge os-update`, `bridge help`.
+sudo ln -sfn "$BOX_DIR/bridge.sh" /usr/local/bin/bridge
+sudo chmod +x "$BOX_DIR/bridge.sh"
+
 # Supply the app's .env (gitignored in the app repo) + create data dirs before
 # building the initial release. The prebuild migration and next build need it.
 # Invoke via `bash` so this never depends on the exec bit or shebang.
