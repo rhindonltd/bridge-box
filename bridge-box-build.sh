@@ -24,7 +24,7 @@ CURRENT_LINK="$SCORER_DIR/current"
 LOGFILE="$INSTALL_DIR/build.log"
 LOCKFILE="$INSTALL_DIR/.update.lock"
 
-NPM_INSTALL_TIMEOUT=900   # background build can take longer on a Pi
+# Deps are installed online in Phase 1; this phase only builds (offline).
 NPM_BUILD_TIMEOUT=900
 
 # Bounded logging.
@@ -66,13 +66,19 @@ fi
 
 echo "Building release: $TO_BUILD (low priority)"
 
-# Supply the app's .env (gitignored in the app repo) before building — the
-# prebuild migration and next build need it. Also ensures data dirs exist.
-# Invoke via `bash` so this never depends on the exec bit or shebang.
-bash /home/bridgebox/bridge-box/bridge-box-deploy-env.sh "$TO_BUILD" || {
-    echo "Could not deploy .env — aborting build, will retry next boot."
+# Dependencies + .env are handled ONLINE in Phase 1 (bridge-box-update.sh), so
+# this phase has no network. If node_modules is missing, Phase 1's npm ci didn't
+# complete — don't try to install here (no network); leave .needs_build set so
+# Phase 1 retries the download+install next boot, and skip.
+if [ ! -d "$TO_BUILD/node_modules" ]; then
+    echo "node_modules missing (deps not installed in Phase 1) — discarding this release so Phase 1 re-downloads+installs next boot."
+    # Only remove if genuinely under releases/ and not the active release.
+    if [[ "$TO_BUILD" == "$RELEASES_DIR/"* ]] && \
+       [ "$(readlink -f "$TO_BUILD")" != "$(readlink -f "$CURRENT_LINK" 2>/dev/null)" ]; then
+        rm -rf "$TO_BUILD"
+    fi
     exit 0
-}
+fi
 
 # Low CPU/IO priority so a game in progress stays responsive.
 NICE="nice -n 19"
@@ -80,11 +86,7 @@ command -v ionice >/dev/null 2>&1 && NICE="ionice -c3 $NICE"
 
 build_one() {
     cd "$TO_BUILD" || return 1
-    local install_cmd="npm install"
-    [ -f package-lock.json ] && install_cmd="npm ci"
-    echo "Installing dependencies ($install_cmd)..."
-    timeout "$NPM_INSTALL_TIMEOUT" $NICE $install_cmd || return 1
-    echo "Building..."
+    echo "Building (npm run build, no network)..."
     timeout "$NPM_BUILD_TIMEOUT" $NICE npm run build || return 1
 }
 

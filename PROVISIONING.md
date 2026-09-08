@@ -120,9 +120,12 @@ On reboot the device runs its startup automatically:
 How updates work (worth knowing):
 - The box only checks for updates **at switch-on** — there's no background schedule, which suits a
   device that's unplugged and put away between sessions.
-- To keep switch-on-to-game fast, the update at boot only **downloads**; the slow build happens in
-  the background afterwards and the new version is activated at the *next* boot. So a new release
+- At boot the update **downloads the new version and fetches its dependencies** while online (this
+  needs a working `wifi.json` and can take a few minutes); the slower **compile** then happens in
+  the background afterwards, and the new version goes live at the *next* switch-on. So a new release
   lands one session after it's published. An offline box (no `wifi.json`) skips all this.
+- Because the app runs as its own service, none of this blocks the app — it keeps serving on the
+  current version throughout; only the *new* version's preparation happens in the background.
 - The app runs as its own service, independent of the update check — so it comes up regardless of
   whether WiFi is available, and the update's brief network switch happens at boot before anyone is
   using the app (never mid-session).
