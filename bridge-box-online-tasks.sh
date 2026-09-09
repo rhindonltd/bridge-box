@@ -58,9 +58,19 @@ if [ -L "$PENDING_LINK" ]; then
         [ -L "$CURRENT_LINK" ] && ln -sfn "$(readlink -f "$CURRENT_LINK")" "$PREVIOUS_LINK"
         ln -sfn "$PENDING_TARGET" "$CURRENT_LINK"
         rm -f "$PENDING_LINK"
-        echo "activate: restarting app service..."
-        sudo -n /usr/local/bridgebox/bin/restart-app.sh 2>/dev/null || \
-            echo "activate: WARNING could not restart app service (new code runs next boot)."
+        # Only restart if the app is ALREADY running (manual update-now while
+        # live). At boot this orchestrator runs Before=bridge-box-app, so the app
+        # hasn't started yet — the symlink swap is enough; it'll start fresh on
+        # the new release. Restarting at boot is unnecessary and (being ordered
+        # before the app) risks a systemd job deadlock. The helper uses
+        # --no-block regardless, so the restart is queued, never waited on.
+        if systemctl is-active --quiet bridge-box-app.service; then
+            echo "activate: app is running — requesting restart onto new release..."
+            sudo -n /usr/local/bridgebox/bin/restart-app.sh 2>/dev/null || \
+                echo "activate: WARNING could not restart app service (new code runs next boot)."
+        else
+            echo "activate: app not yet started — it will come up on the new release."
+        fi
     else
         echo "activate: pending release not fully built — leaving current in place."
         rm -f "$PENDING_LINK"
