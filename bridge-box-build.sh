@@ -1,11 +1,11 @@
 #!/bin/bash
 # BridgeBox Phase 2 — background build of a downloaded release (bridgebox user).
 #
-# Runs after bridge-box-update.service on each boot. Finds a release that was
+# Runs after bridge-box-online-tasks.service on each boot. Finds a release that was
 # downloaded but not yet built (marked with .needs_build by Phase 1), and builds
 # it with LOW priority so a live game is not disturbed. On success it marks the
 # release .built and points 'pending' at it, so the NEXT boot (Phase 3 in
-# bridge-box-update.sh) activates it. On failure it discards the release.
+# bridge-box-online-tasks.sh) activates it. On failure it discards the release.
 #
 # There is NO network activity here — everything was downloaded in Phase 1.
 #
@@ -66,7 +66,7 @@ fi
 
 echo "Building release: $TO_BUILD (low priority)"
 
-# Dependencies + .env are handled ONLINE in Phase 1 (bridge-box-update.sh), so
+# Dependencies + .env are handled ONLINE in Phase 1 (the download job), so
 # this phase has no network. If node_modules is missing, Phase 1's npm ci didn't
 # complete — don't try to install here (no network); leave .needs_build set so
 # Phase 1 retries the download+install next boot, and skip.

@@ -21,10 +21,11 @@ fi
 
 log() { echo "$(date -Is) $*" >> "$LOGFILE"; }
 
-# Don't act while an update is in progress (#1): it may be briefly switching
-# wlan0 / restarting the app, which would look unhealthy and trigger a needless
-# reload right as the update reloads too.
-if systemctl is-active --quiet bridge-box-update.service; then
+# Don't act while the online-tasks window or a manual sync is running: those may
+# briefly switch wlan0 / restart the app, which would look unhealthy and trigger
+# a needless restart. Skip if either is active.
+if systemctl is-active --quiet bridge-box-online-tasks.service \
+   || systemctl is-active --quiet bridge-box-player-sync.service; then
     exit 0
 fi
 

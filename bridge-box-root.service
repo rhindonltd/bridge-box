@@ -1,7 +1,7 @@
 [Unit]
 Description=BridgeBox Root Setup (hotspot/firewall)
 After=network.target
-Before=bridge-box-update.service
+Before=bridge-box-online-tasks.service
 
 [Service]
 Type=oneshot

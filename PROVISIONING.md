@@ -109,26 +109,27 @@ sudo reboot
 On reboot the device runs its startup automatically:
 - `bridge-box-root` (as root) brings up the hotspot, firewall/NAT, and sets the hostname to
   `bridge`.
-- `bridge-box-update` (as `bridgebox`) does a quick update check (only if `wifi.json` is present):
-  it activates any update that was built last session, **downloads** any newer version, and returns
-  to the hotspot. It does **not** run the app.
+- `bridge-box-online-tasks` (as `bridgebox`) does all the network chores in **one** short online
+  window (only if `wifi.json` is present): it activates any update that was built last session, then
+  briefly switches to your WiFi to **download** any newer app version and **refresh the EBU player
+  list**, then switches back to the hotspot. It does **not** run the app.
 - `bridge-box-app` runs the scoring app itself, supervised by the system — it starts at boot and is
   automatically restarted if it ever stops.
 - `bridge-box-build` (as `bridgebox`) quietly builds a freshly-downloaded version in the background;
   that version goes live the **next** time the box is switched on.
 
 How updates work (worth knowing):
-- The box only checks for updates **at switch-on** — there's no background schedule, which suits a
-  device that's unplugged and put away between sessions.
-- At boot the update **downloads the new version and fetches its dependencies** while online (this
-  needs a working `wifi.json` and can take a few minutes); the slower **compile** then happens in
-  the background afterwards, and the new version goes live at the *next* switch-on. So a new release
-  lands one session after it's published. An offline box (no `wifi.json`) skips all this.
-- Because the app runs as its own service, none of this blocks the app — it keeps serving on the
-  current version throughout; only the *new* version's preparation happens in the background.
-- The app runs as its own service, independent of the update check — so it comes up regardless of
-  whether WiFi is available, and the update's brief network switch happens at boot before anyone is
-  using the app (never mid-session).
+- The box only does network chores (update download, player-list refresh) **at switch-on**, in one
+  window **before anyone is using it** — never on a timer that could interrupt a session. This suits
+  a device that's unplugged and put away between sessions.
+- That window **downloads the new version and fetches its dependencies** while online (needs a
+  working `wifi.json`, can take a few minutes); the slower **compile** happens in the background
+  afterwards, and the new version goes live at the *next* switch-on. So a release lands one session
+  after it's published. An offline box (no `wifi.json`) skips all this.
+- The app runs as its own service, independent of all this — it keeps serving on the current version
+  throughout, and the brief network switch happens at boot before anyone connects (never
+  mid-session). You can also trigger the chores manually when idle: `bridge update-now`,
+  `bridge sync-players`.
 
 Give it a minute or two after boot to settle.
 
@@ -203,11 +204,10 @@ echo 'RELEASE_REF="v1.4.0"' > /home/bridgebox/release.conf
 `RELEASE_REF` can be a branch or a tag. The box deploys the exact commit that ref points to.
 
 To force an update check now (downloads a newer version; it still builds in the background and goes
-live at the next switch-on):
+live at the next switch-on) — this briefly drops the hotspot, so run it when no one is playing:
 
 ```bash
-sudo systemctl restart bridge-box-update
-sudo systemctl start bridge-box-build     # optional: kick the background build now
+bridge update-now
 ```
 
 The simplest way to fully apply an update is just to switch the box off and on twice: once to
@@ -282,6 +282,13 @@ type `bridge.local` themselves):
 echo 'CAPTIVE_PORTAL="no"' > /home/bridgebox/captive.conf
 sudo systemctl restart bridge-box-root   # or reboot
 ```
+
+**Player list (EBU).** The box keeps a local copy of the EBU player list (so directors can search
+players offline). It's populated during provisioning and refreshed automatically about once a day
+**when the box has internet** (it briefly switches to the `wifi.json` network, syncs, and switches
+back). If a box was provisioned offline, player search returns nothing until the first successful
+sync. Force one now with `bridge sync-players` (needs internet). Details in
+`/home/bridgebox/player-sync.log`.
 
 **Backups.** Score data is backed up hourly and automatically. Backups are stored **on the device**
 (or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you want an
@@ -358,8 +365,9 @@ sudo apt-get -f install
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
 | `bridge-box-app.service` | bridgebox | Runs the scoring app (auto-restarts if it stops) |
-| `bridge-box-update.service` | bridgebox | Boot: activate pending update + download a new one (no build) |
+| `bridge-box-online-tasks.service` | bridgebox | Boot: one online window — activate pending update, download a new one, refresh player list |
 | `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
+| `bridge-box-player-sync.service` | bridgebox | Manual only (`bridge sync-players`) — no timer; runs in an online window |
 | `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: restart the app if it's not responding |
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
@@ -375,6 +383,7 @@ bridge update-now    # check for an app update now (goes live next switch-on)
 bridge os-update     # apply OS security updates (switches to WiFi, then back)
 bridge node-upgrade 24   # move Node.js to a new major version
 bridge backup-now    # take a data backup now
+bridge sync-players  # update the EBU player list now (needs internet)
 bridge version       # show the running app version
 bridge wifi          # show WiFi config (or: bridge wifi <ssid> <password> [hidden])
 bridge password      # show this box's hotspot SSID + password
@@ -383,7 +392,7 @@ bridge reboot        # reboot the box
 
 These are thin wrappers over the underlying scripts/services — you can still call those directly if
 you prefer (e.g. `sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh`, `journalctl -u
-bridge-box-update -b`).
+bridge-box-online-tasks -b`).
 
 **Common issues**
 - *No hotspot after boot:* check `journalctl -u bridge-box-root -b`; ensure the Pi's OS uses

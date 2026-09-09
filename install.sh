@@ -144,12 +144,16 @@ mkdir -p "$INSTALL_DIR/backups"
 echo "Installing systemd service files..."
 sudo cp "$BOX_DIR/bridge-box-root.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-app.service" /etc/systemd/system/
-sudo cp "$BOX_DIR/bridge-box-update.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-online-tasks.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-build.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.timer" /etc/systemd/system/
+# player-sync.service is used by the manual `bridge sync-players` path (it wraps
+# the sync job in an online window). No player-sync TIMER — sync runs only in
+# the boot online window (bridge-box-online-tasks) or manually, never mid-session.
+sudo cp "$BOX_DIR/bridge-box-player-sync.service" /etc/systemd/system/
 
 # --- 8. Enable and start services ---
 # Guard: never enable the app services against a missing or half-built release.
@@ -163,14 +167,29 @@ if [ ! -e "$CURRENT_LINK" ]; then
 fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable bridge-box-root bridge-box-update bridge-box-build bridge-box-app
+# Boot chain: root -> online-tasks (activate + download + player-sync, one
+# online window) -> app -> build. bridge-box-online-tasks and build fire at
+# boot via their ordering; player-sync.service has no timer (manual/boot only).
+sudo systemctl enable bridge-box-root bridge-box-online-tasks bridge-box-build bridge-box-app
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
 sudo systemctl start bridge-box-root
-sudo systemctl start bridge-box-update
+sudo systemctl start bridge-box-online-tasks
 sudo systemctl start bridge-box-app          # native systemd app service
-# bridge-box-build runs after update; enabling is enough (it fires at boot).
+# bridge-box-build runs after online-tasks; enabling is enough (it fires at boot).
 sudo systemctl start bridge-box-healthcheck.timer
 sudo systemctl start bridge-box-backup.timer
+
+# --- 8b. Initialise the EBU player list (soft-deferred) ---
+# Try once now so the box ships with a populated players.db. NON-fatal: if
+# there's no connectivity the box still provisions fine, and the next boot's
+# online window (bridge-box-online-tasks) will populate it. During install the
+# box is typically already online (that's how we're fetching everything), so the
+# sync job runs directly; if not, it no-ops safely.
+echo "Initialising EBU player list (best-effort)..."
+sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"   # so the sync writes as bridgebox cleanly
+sudo -u bridgebox env HOME="$INSTALL_DIR" \
+    bash "$BOX_DIR/bridge-box-player-sync.sh" || \
+    echo "Initial player sync did not complete — it will run on the next online boot."
 
 # --- 9. Fix permissions ---
 sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"

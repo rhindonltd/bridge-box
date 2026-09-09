@@ -7,7 +7,9 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 - `install.sh` — One-time factory installer. Run as the `bridgebox` user on a fresh Pi. Installs system deps + Node.js (NodeSource, `NODE_MAJOR` default 24), configures passwordless sudo helpers, clones this repo and the scorer app, sets up the atomic release layout, and installs/enables the systemd services and timers. **No PM2** — the app runs as a native systemd service.
 - `bridge-box-root.service` / `bridge-box-root.sh` — Runs as **root** at boot (before the update service). Brings up the WiFi hotspot (per-device password), enables IP forwarding, applies NAT via `bridge-box-nat.sh`, and sets the hostname to `bridge`.
 - `bridge-box-app.service` / `bridge-box-app-launch.sh` — The scorer app, run as a **native systemd service** (Type=simple, `Restart=always`), supervised directly by systemd (no PM2). The launcher resolves the active release + `APP_COMMIT`, `cd`s to it, and `exec`s the entrypoint (`node dist/server.js`, else `tsx server.ts`) in the foreground so systemd's main PID is the app. Env (NODE_ENV/PORT/HOST/DB paths) comes from the unit. Independent of the update/network flow — stays up regardless of WiFi state.
-- `bridge-box-update.service` / `bridge-box-update.sh` — Runs as the **bridgebox** user after root setup, `Before=bridge-box-app.service`. Single-instanced via `flock`. **Download-only** — does NOT start the app. Implements **Phase 3** (activate a built `pending` release, then `systemctl restart bridge-box-app`) and **Phase 1** (download the newer release, bounded 90s, then return to hotspot). Skips instantly if no `wifi.json`. Can fail entirely without affecting app availability (the app is its own unit).
+- `bridge-box-online-tasks.service` / `bridge-box-online-tasks.sh` — **Boot orchestrator** (bridgebox), `After=bridge-box-root`, `Before=bridge-box-app`. Fork/join: does the **local Phase 3** first (activate a built `pending` release + `systemctl restart bridge-box-app` — no network), then opens **one** online window via `bb_run_online_window` and runs the network jobs sequentially inside it: the update **download job** (`bridge-box-update.sh`) then the **player-sync job** (`bridge-box-player-sync.sh`). One hotspot down/up per boot. Skips network jobs if no `wifi.json`. Retired the old `bridge-box-update.service`.
+- `bridge-box-update.sh` — The update **download job** (radio-agnostic; assumes it's already online). Phase 1: download a newer release, deploy `.env`, `npm ci` (all while online), flag `.needs_build`. No radio/lock/trap of its own — the online window owns those. Run by the orchestrator (and reusable elsewhere).
+- `bridge-box-player-sync.sh` / `bridge-box-player-sync.service` — The player-sync **job** (radio-agnostic): runs the app's `dist/sync-players.js` (self-migrating, idempotent, guarded) to refresh the EBU list in `players.db`. The **service** is the manual path (`bridge sync-players`): it wraps the job in one online window via `bb_run_online_window`. **No timer** — sync only runs in the boot window or manually, never mid-session.
 - `bridge-box-build.service` / `bridge-box-build.sh` — **Phase 2.** Runs as **bridgebox** after the update service, at low CPU/IO priority (`Nice=19`, `IOSchedulingClass=idle`). Builds a downloaded-but-unbuilt release (marked `.needs_build`) with no network activity, then marks it `.built` and points `pending` at it for activation next boot. Power-cut safe: never touches `current`; a half-built release is retried on the next boot.
 - `bridge-box-wifi-ctl.sh` — Root-only privileged WiFi control (`connect` / `hotspot` verbs) that reads `wifi.json` itself. Invoked by the unprivileged boot update service via the `wifi-ctl.sh` sudo helper so it can switch networks without granting `bridgebox` broad NetworkManager rights. `os-update`/`node-upgrade` (root) don't use it — the lib drives nmcli directly when already root.
 - `bridge-box-nat.sh` — Idempotent NAT/port-redirect script (guest 80/443 → app `APP_PORT`). Shared by `bridge-box-root.sh` (at boot) and re-applied after an update cycle via the `apply-nat.sh` sudo helper. Run as root.
@@ -17,7 +19,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 - `bridge-box-node-upgrade.sh` — **Manual**, admin-run Node.js **major** upgrade (e.g. 22 → 24). Re-points the NodeSource apt repo to a new major and rebuilds the current release against it. See Node policy below. Also auto-switches to client WiFi via the lib.
 - `bridge-box-healthcheck.service` / `.timer` / `bridge-box-healthcheck.sh` — Periodic watchdog (every ~2 min) that curls the app on `:3000` (health endpoint if available, else root URL) and, if unresponsive twice, `systemctl restart bridge-box-app` (via the `restart-app.sh` sudo helper). Catches the "hung but alive" case (systemd's `Restart=always` only catches a *crashed* process, not a hung one).
 - `bridge-box-backup.service` / `.timer` / `bridge-box-backup.sh` — Hourly SQLite online backup (`sqlite3 .backup`) of **all** databases found recursively under `data/` (the app uses multiple: game-index, per-game, player, settings), preferring a mounted USB stick under `/media/bridgebox`, else `backups/`. Backup filenames encode the relative path so per-game DBs in subdirs don't collide; retains the newest N per database.
-- `bridge.sh` — Admin CLI dispatcher, installed as `/usr/local/bin/bridge` (symlink). Subcommands (`status`, `logs`, `restart`, `update-now`, `os-update`, `node-upgrade`, `backup-now`, `version`, `wifi`, `password`, `reboot`, `help`) are thin wrappers over the scripts/units. App subcommands use `systemctl`/`journalctl` on `bridge-box-app.service`; system ones use sudo. Add new common tasks here rather than making users memorise long paths.
+- `bridge.sh` — Admin CLI dispatcher, installed as `/usr/local/bin/bridge` (symlink). Subcommands (`status`, `logs`, `restart`, `update-now`, `os-update`, `node-upgrade`, `cleanup-legacy`, `backup-now`, `sync-players`, `version`, `wifi`, `password`, `reboot`, `help`) are thin wrappers over the scripts/units. App subcommands use `systemctl`/`journalctl` on `bridge-box-app.service`; system ones use sudo. Add new common tasks here rather than making users memorise long paths.
 - `bridge-box-deploy-env.sh` — Drops the scorer `.env` into a release dir before building (box-local `scorer.env` if present, else `scorer.env.template`) and ensures `data/`+`data/games/` exist. Called by `install.sh` and `bridge-box-build.sh` before their builds. Single source of truth for supplying build-time env.
 - `scorer.env.template` — Template `.env` for the scorer app (gitignored in that repo but needed at build time). Absolute DB paths only; no `NEXT_PUBLIC_APP_URL` (the app uses same-origin for sockets).
 - `bridge-box-app-launch.sh` — Foreground launcher used as the app service's `ExecStart` (resolves release + APP_COMMIT + entrypoint, then `exec`s it). (The former PM2 artifacts `main-app.js`/`pm2.json` have been removed.)
@@ -35,7 +37,7 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 │   ├── current   -> releases/...   # active release (symlink)
 │   ├── previous  -> releases/...   # last-good release for rollback (symlink)
 │   └── pending   -> releases/...   # built release awaiting activation next boot (symlink)
-├── data/                           # app data (DATABASE_URL), SQLite DBs
+├── data/                           # app data (DATABASE_URL), SQLite DBs incl. players.db (EBU list)
 ├── backups/                        # on-disk backups (fallback when no USB)
 ├── wifi.json                       # user-supplied WiFi config { ssid, password, hidden } (chmod 600)
 ├── hotspot.conf                    # optional: HOTSPOT_PASS override (else derived from MAC)
@@ -46,17 +48,20 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 ├── .provisioned                    # marker: present only after a successful install
 ├── .update.lock                    # flock file for single-instance update runs
 ├── root.log                        # bounded (auto-truncated ~5 MB)
-├── update.log                      # bounded (auto-truncated ~5 MB)
+├── online-tasks.log                # bounded (auto-truncated ~5 MB) — boot online window
+├── update.log                      # bounded (auto-truncated ~5 MB) — download job
 ├── build.log                       # bounded (auto-truncated ~5 MB) — Phase 2 build
 ├── healthcheck.log                 # bounded (auto-truncated ~2 MB)
-└── backup.log                      # bounded (auto-truncated ~2 MB)
+├── backup.log                      # bounded (auto-truncated ~2 MB)
+└── player-sync.log                 # bounded (auto-truncated ~2 MB) — EBU player sync
 ```
 
 USB backups (when a stick is mounted): `/media/bridgebox/<mount>/bridge-box-backups/`.
 
 Also installed system-wide:
-- `/etc/systemd/system/bridge-box-{root,update,build}.service`
+- `/etc/systemd/system/bridge-box-{root,online-tasks,build,app}.service`
 - `/etc/systemd/system/bridge-box-{healthcheck,backup}.service` and `.timer`
+- `/etc/systemd/system/bridge-box-player-sync.service` (no timer — manual/boot-window only)
 - `/usr/local/bin/bridge` (symlink to `bridge.sh`) — the admin CLI
 - `/usr/local/bridgebox/bin/{restart-service,reboot,apply-nat,wifi-ctl}.sh` (root-owned, invoked via sudoers)
 - `/etc/sudoers.d/bridgebox`
@@ -71,20 +76,23 @@ Also installed system-wide:
 Updates are tied to the **power cycle**, not a schedule (the box lives in a cupboard between
 sessions, so timers are useless; and the director just unplugs it, so there's no end-of-session
 action). The design keeps switch-on-to-game fast while still updating:
-- **Phase 1 — boot, online (network):** if `wifi.json` exists, connect to the club WiFi, compare the
-  pinned `RELEASE_REF` to the **newest downloaded** release (not just `current`), and if newer:
-  `git clone`+checkout, deploy `.env`, and **run `npm ci` WHILE ONLINE** (a new release may change
-  dependencies, and Phase 2 has no network — so deps MUST be fetched here). Only after deps install
-  does it mark `.needs_build`, then return to hotspot. Bounded by a generous deadline (`PHASE1_DEADLINE`,
-  ~15 min) since `npm ci` on a Pi is slow and nothing user-facing waits on it (the app is its own
-  service). No `wifi.json` → skip instantly.
+All network work at boot happens inside **one** online window opened by
+`bridge-box-online-tasks.service` (via `bb_run_online_window`) — see the fork/join design decision.
+Within that:
+- **Phase 3 — LOCAL, before the window:** the orchestrator first (no network) activates any built
+  `pending` release — point `current` at it (old → `previous`), clear `pending`, `systemctl restart
+  bridge-box-app`. Runs before the window because it needs no connectivity, and before the app so it
+  comes up on the new code (`online-tasks` is `Before=bridge-box-app`).
+- **Phase 1 — download job, inside the window (`bridge-box-update.sh`):** compare the pinned
+  `RELEASE_REF` to the **newest downloaded** release (not just `current`); if newer, `git
+  clone`+checkout, deploy `.env`, and **`npm ci` WHILE ONLINE** (a new release may change deps, and
+  Phase 2 has no network). Only after deps install does it mark `.needs_build`. `npm ci` on a Pi is
+  slow, so the window's deadline is generous; nothing user-facing waits (the app is its own service).
 - **Phase 2 — background, after boot (`bridge-box-build.service`, NO network):** low-priority
-  **`npm run build` only** (pure CPU — deps are already installed by Phase 1). On success mark
-  `.built` and set `pending`; if `node_modules` is missing (Phase 1 didn't finish), it discards the
-  release so Phase 1 re-downloads+installs next boot. Never touches the running app.
-- **Phase 3 — next boot, before the app service starts:** if a `.built` `pending` release exists,
-  atomically point `current` at it (old → `previous`), clear `pending`, and `systemctl restart
-  bridge-box-app` so it runs the new code. (`bridge-box-update` is ordered `Before=bridge-box-app`.)
+  **`npm run build` only** (deps already installed by Phase 1). On success mark `.built` and set
+  `pending`; if `node_modules` is missing it discards the release so Phase 1 re-does it next boot.
+  Never touches the running app. Its **build** must itself be offline (fonts self-hosted etc. — see
+  the app's offline-build spec).
 
 **Future direction (Option D — not yet implemented):** move the build to **CI** and have the box
 download a **prebuilt, compiled artifact** (tarball/release) instead of building on-device. This
@@ -104,7 +112,9 @@ at the very start of a boot). Invariants to preserve:
 
 ## Design decisions & policies
 - **The app runs as a native systemd service (`bridge-box-app.service`), NOT PM2.** This was a deliberate move away from PM2, which caused a long series of systemd-interaction bugs (PM2's daemon inheriting a held flock fd; the daemon being reaped when the launching oneshot's cgroup was torn down; `$HOME`/`PM2_HOME` mismatches making `pm2 status` see nothing; oneshot exit-code loops). systemd is itself a process supervisor, so we use it directly: `Type=simple`, `Restart=always`, `ExecStart` runs `bridge-box-app-launch.sh` which `exec`s the entrypoint in the foreground. This removed that entire class of bugs. **Do not reintroduce PM2.**
-- **App start and updating are separate concerns/units.** `bridge-box-app.service` owns running the app; `bridge-box-update.service` only downloads/activates. The update flow can fail entirely without affecting app availability, and there is no network switching while the app is being used (updates only run at boot, before anyone connects). Activation (Phase 3) swaps the `current` symlink then `systemctl restart bridge-box-app`.
+- **App start and network tasks are separate concerns/units.** `bridge-box-app.service` owns running the app; `bridge-box-online-tasks.service` owns the boot activate+download+sync. The network flow can fail entirely without affecting app availability, and there is no network switching while the app is in use (network tasks run only in the boot window before anyone connects, or by explicit manual command).
+- **Fork/join online window.** The single radio means any network task = hotspot down = users disconnected, so all boot network work goes through **one** window (`bb_run_online_window` in the lib): open once (lock → hotspot down → client WiFi), run jobs **sequentially** inside it, close once (hotspot + NAT restored via a guaranteed trap). Adding a network task = adding a job to the orchestrator, NOT a new timer/hotspot cycle. Jobs are radio-agnostic (assume online; no lock/trap of their own). Local-only steps (update Phase 3 activate) run OUTSIDE the window, before it. `bb_run_online_window` is the **single entry point** any new boot/manual network task must use. **Tech-debt (accepted):** `os-update`/`node-upgrade` still hand-wire `bb_acquire_lock`+`bb_wifi_online`+trap rather than using `bb_run_online_window` — fine for now, migrate later.
+- **No during-session network switching / no player-sync timer.** Player sync (and updates) must NEVER run on a clock that could fire mid-session and drop users. They run in the boot window (before the app serves anyone) or via a manual `bridge` command (which warns it drops the hotspot). This is why there is no `bridge-box-player-sync.timer`.
 - **The app entrypoint is picked per release:** `node dist/server.js` (compiled build, preferred), else `tsx server.ts`; the `--require ./scripts/allow-server-only.cjs` shim is included only if present. Once all releases ship `dist/server.js`, the tsx branch can go.
 - **No automatic OS updates.** The boot flow does not run `apt upgrade`, so the appliance is predictable and can't be broken by an unattended kernel/firmware change during a club session. Security updates are applied manually and occasionally by an admin via `bridge-box-os-update.sh` when the box has internet. This is a deliberate tradeoff (predictability over automatic patching).
 - **Node.js install & upgrades.** Node is installed from the **NodeSource apt repo**, pinned to a major line via `NODE_MAJOR` in `install.sh` (default **24**, current LTS). A routine `apt upgrade` only moves *within* that major (e.g. 24.x.y); it never crosses majors. A **major** bump (e.g. 22 → 24) is a deliberate, hands-on step via `bridge-box-node-upgrade.sh`, which re-points the repo, rebuilds the current release so native modules match, and restarts `bridge-box-app.service`.
@@ -117,16 +127,16 @@ at the very start of a boot). Invariants to preserve:
 - **Captive portal is DNS-hijack only, no app login.** The box resolves all hotspot DNS to itself so opening any URL shows the app; there is deliberately no sign-in/auth step. The DNS hijack is scoped to the hotspot's shared dnsmasq so it must NOT break the box's own outbound DNS during updates — verify this if changing network setup. True auto-popup behaviour in the OS captive-detection webview may later want a small landing-page handler in the scorer app (probe URLs), but that is not built and not required for the "open browser → app" flow. Disable per-box via `CAPTIVE_PORTAL="no"` in `captive.conf`.
 
 ## Rules for changes
-- The boot services have an ordering contract: `root` (network/firewall) → `update` (Phase 3 activate + Phase 1 download) → `app` (`Before=bridge-box-app`, so a pending release is activated before the app starts) → `build` (Phase 2 background build). Preserve `After=`/`Requires=`/`Before=` when editing.
-- The app is a separate unit (`bridge-box-app.service`, Restart=always); `bridge-box-update.sh` no longer starts it. Don't move app-starting back into the update script.
-- Only one process should touch `wlan0`/NAT at a time: the update run and the manual maintenance scripts all take `flock` on `.update.lock` (the update service via its own guard, maintenance scripts via `bb_acquire_lock`), and the health check skips while `bridge-box-update.service` is active. Preserve all these guards. Any new script that switches `wlan0` must source `bridge-box-wifi-lib.sh` and take the lock rather than reimplementing the switch.
+- The boot services have an ordering contract: `root` (network/firewall) → `online-tasks` (local Phase-3 activate, then one online window: download + player-sync; `Before=bridge-box-app`) → `app` → `build` (`Requires=/After=bridge-box-online-tasks`, Phase 2 background build). Preserve `After=`/`Requires=`/`Before=` when editing.
+- The app is a separate unit (`bridge-box-app.service`, Restart=always); the online-tasks orchestrator and its jobs never start it (only Phase-3 activation restarts it via the sudo helper). Don't move app-starting into the network path.
+- Only one process should touch `wlan0`/NAT at a time: all take `flock` on `.update.lock` (`bb_run_online_window` and the maintenance scripts via `bb_acquire_lock`), and the health check skips while `bridge-box-online-tasks.service` **or** `bridge-box-player-sync.service` is active. Preserve all these guards. Any new script that switches `wlan0` must go through `bb_run_online_window` (or at least the lib's helpers), never reimplement the switch.
 - `bridge-box-update.sh` sources the lib **non-fatally**: if the lib is missing it defines minimal fallbacks (updates just get skipped). The app is unaffected either way (separate unit).
 - NAT/port-redirect logic lives only in `bridge-box-nat.sh` (one source of truth); re-apply it (don't inline iptables) if you add code paths that switch `wlan0`.
 - **Single WiFi radio: can't be a hotspot AND join a client network at once.** Before a client connect, the hotspot profile's autoconnect is disabled (it has high priority and would re-steal the radio) and the hotspot brought down, then a rescan; returning to hotspot re-enables autoconnect and brings it back. Symptom if broken: client connect fails with "No network with SSID … found" while the hotspot is up.
 - **`bridge-box-root.service` must NOT auto-restart** (it's `Type=oneshot`, no `Restart=`). It sets up the hotspot once; because the script (re)creates the hotspot connection, a `Restart=on-failure` turned a transient nmcli error into a delete/recreate loop that thrashed the single radio and cascaded into the update service. The script itself retries the hotspot bring-up internally (`bring_up_hotspot`, up to 5 attempts, only recreating if not already active) rather than relying on systemd restarts.
 - **The Pi's Broadcom WiFi (brcmfmac) needs settle time + scan retries.** Rapidly switching the single radio from AP (hotspot) to client scanning causes `brcmf_escan_timeout` — a failed scan that surfaces as "No network with SSID found". `wifi-ctl.sh` mitigates this: a ~5s settle after taking the hotspot down, then `wait_for_ssid` which rescans up to ~6 times (3s apart) until the target SSID appears before attempting to connect (hidden SSIDs skip the wait). Don't trim these delays/retries — they're load-bearing on real hardware. The whole thing must still fit inside the 90s Phase 1 deadline.
 - **WiFi connect must be non-destructive.** Connect first (nmcli reuses/updates any saved profile); only delete the profile and retry if that first attempt fails. Never `nmcli connection delete` *before* connecting — a transient failure (e.g. NM busy) would then leave the box with no profile AND not connected ("deleted then failed → lost WiFi"). Also wait for `wlan0` to leave connecting/deactivating state before connecting, to avoid "New connection activation was enqueued".
-- **Update runs must not overlap.** `bridge update-now` runs the download (update service) and build strictly sequentially with `--wait`; they share `.update.lock` and the single radio, and overlapping runs cause NM "activation enqueued" errors.
+- **Network runs must not overlap.** `bridge update-now` runs the online-tasks window and the build strictly sequentially with `--wait`; they share `.update.lock` and the single radio, and overlapping runs cause NM "activation enqueued" errors. The lock inside `bb_run_online_window` enforces single-instance.
 - **NetworkManager control needs root; the boot update service runs as `bridgebox`.** So `nmcli` connection changes as `bridgebox` fail with "not authorized". The lib (`bridge-box-wifi-lib.sh`) therefore branches on `_bb_is_root`: root callers (`os-update`/`node-upgrade`, run via sudo) drive `nmcli` directly; non-root callers (the boot update service) route the privileged connect / return-to-hotspot through `bridge-box-wifi-ctl.sh` via the fixed-path sudo helper `/usr/local/bridgebox/bin/wifi-ctl.sh {connect|hotspot}` (allowlisted in sudoers). The helper reads `wifi.json` itself so no password is ever on the command line. This mirrors the `apply-nat.sh` privilege-bridge pattern. Symptom if broken: boot-time update logs "not authorized" and downloads nothing, while `bridge-box-os-update.sh` (root) works fine.
 - **Line endings must be LF.** Scripts run on the Pi; a CRLF shebang (from a Windows/editor checkout) makes direct execution fail with a confusing "command not found". `.gitattributes` forces `eol=lf` on `*.sh`/`*.service`/`*.timer` etc., `install.sh` strips any stray `\r` from scripts, and internal script-to-script calls use `bash <path>` (not bare `<path>`) so they don't depend on the exec bit or shebang. Keep all three when adding scripts.
 - The app (its own service) must be independent of internet/updates — never make app startup depend on a successful WiFi/update step.

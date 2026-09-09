@@ -1,14 +1,14 @@
 [Unit]
-Description=BridgeBox App Update (download only)
+Description=BridgeBox Boot Online Tasks (activate update, download, player sync)
 After=bridge-box-root.service
 Requires=bridge-box-root.service
-# Run before the app service so a pending release is activated before the app
-# starts, and the boot download happens before anyone is using the app.
+# Run before the app so a pending release is activated and the boot online
+# window (download + player sync) happens BEFORE anyone is using the app.
 Before=bridge-box-app.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/bridgebox/bridge-box/bridge-box-update.sh
+ExecStart=/home/bridgebox/bridge-box/bridge-box-online-tasks.sh
 User=bridgebox
 Environment=HOME=/home/bridgebox
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
