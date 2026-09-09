@@ -38,13 +38,12 @@ case "$cmd" in
     ;;
 
   update-now)
-    echo "Checking for an app update now (downloads; builds in background; live next boot)..."
-    # Run strictly sequentially and wait for each to finish, so the download and
-    # the build never overlap (they share the network lock and the radio, and
-    # overlapping runs cause NetworkManager 'activation enqueued' errors).
-    # `restart` on the oneshot update service blocks until it completes; then run
-    # the build to completion with --wait.
-    sudo systemctl restart bridge-box-update
+    echo "Checking for an app update now (downloads + installs deps in one online window)."
+    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
+    # The online-tasks orchestrator opens ONE window and runs the download job
+    # (+ player sync); the build then runs to completion. Both blocking (--wait)
+    # so they don't overlap on the radio/lock. The new version activates next boot.
+    sudo systemctl start --wait bridge-box-online-tasks
     sudo systemctl start --wait bridge-box-build
     echo "Done. The new version (if any) activates on next switch-on."
     ;;
@@ -57,58 +56,43 @@ case "$cmd" in
     exec sudo "$BOX_DIR/bridge-box-node-upgrade.sh" "$@"
     ;;
 
-  cleanup-pm2)
-    # One-off migration cleanup for a box that ran the old PM2-based system.
-    # Idempotent and safe on a box that never had PM2. Removes the orphaned PM2
-    # daemon/state, the global pm2 package, any pm2 boot unit, and the stale
-    # restart-service.sh helper. Does NOT touch the new systemd app service.
-    echo "Cleaning up old PM2-based system (safe to run more than once)..."
-
-    if command -v pm2 >/dev/null 2>&1; then
-        echo "- Killing any running PM2 daemon (as bridgebox)..."
-        sudo -u bridgebox env HOME=/home/bridgebox PM2_HOME=/home/bridgebox/.pm2 pm2 kill >/dev/null 2>&1 || true
-    else
-        echo "- pm2 not installed; nothing to kill."
-    fi
-
-    if [ -d /home/bridgebox/.pm2 ]; then
-        echo "- Removing /home/bridgebox/.pm2 (PM2 state/logs)..."
-        sudo rm -rf /home/bridgebox/.pm2
-    else
-        echo "- No /home/bridgebox/.pm2; skipping."
-    fi
-
-    if systemctl list-unit-files 2>/dev/null | grep -qi '^pm2-'; then
-        unit=$(systemctl list-unit-files 2>/dev/null | grep -i '^pm2-' | awk '{print $1}' | head -n1)
-        echo "- Disabling/removing PM2 boot unit ($unit)..."
-        sudo systemctl disable --now "$unit" 2>/dev/null || true
-        sudo rm -f "/etc/systemd/system/$unit"
+  cleanup-legacy)
+    # One-off migration cleanup: remove systemd units this repo used to install
+    # but no longer does, so an existing box doesn't keep stale/dangling units
+    # after an update. A plain reinstall ADDS the new units but never removes
+    # retired ones — this does. Idempotent and safe: only touches units that are
+    # no longer part of the current design.
+    echo "Removing retired systemd units (safe to run more than once)..."
+    RETIRED_UNITS="bridge-box-update.service bridge-box-player-sync.timer"
+    changed=0
+    for u in $RETIRED_UNITS; do
+        if systemctl list-unit-files 2>/dev/null | grep -q "^$u"; then
+            echo "- Disabling + removing $u..."
+            sudo systemctl disable --now "$u" 2>/dev/null || true
+            sudo rm -f "/etc/systemd/system/$u"
+            changed=1
+        else
+            echo "- $u not present; skipping."
+        fi
+    done
+    if [ "$changed" = "1" ]; then
         sudo systemctl daemon-reload
-    else
-        echo "- No pm2 boot unit; skipping."
+        sudo systemctl reset-failed 2>/dev/null || true
     fi
-
-    if npm ls -g --depth=0 pm2 >/dev/null 2>&1; then
-        echo "- Uninstalling global pm2 npm package..."
-        sudo npm uninstall -g pm2 >/dev/null 2>&1 || true
-    else
-        echo "- Global pm2 package not present; skipping."
-    fi
-
-    if [ -e /usr/local/bridgebox/bin/restart-service.sh ]; then
-        echo "- Removing stale restart-service.sh sudo helper..."
-        sudo rm -f /usr/local/bridgebox/bin/restart-service.sh
-    else
-        echo "- No stale restart-service.sh; skipping."
-    fi
-
-    echo "Cleanup complete. The app runs under bridge-box-app.service now — check: bridge status"
+    echo "Done. Current boot units: root -> online-tasks -> app -> build. Check: systemctl --failed | grep bridge || echo clean"
     ;;
 
   backup-now)
     echo "Running a data backup now..."
     sudo systemctl start bridge-box-backup
     echo "Done. See: bridge logs-backup"
+    ;;
+
+  sync-players)
+    echo "Syncing the EBU player list now."
+    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
+    sudo systemctl start --wait bridge-box-player-sync
+    echo "Done. Details: tail /home/bridgebox/player-sync.log"
     ;;
 
   version)
@@ -154,8 +138,9 @@ BridgeBox admin — usage: bridge <command>
   update-now    Check for an app update now (activates on next switch-on)
   os-update     Apply OS security updates (switches to WiFi, then back)
   node-upgrade  Upgrade Node.js to a new major, e.g. bridge node-upgrade 24
-  cleanup-pm2   One-off: remove leftovers from the old PM2-based system
+  cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
+  sync-players  Update the EBU player list now (briefly drops the hotspot; run when idle)
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]
   password      Show this box's hotspot SSID + password

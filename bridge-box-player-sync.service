@@ -1,0 +1,18 @@
+[Unit]
+Description=BridgeBox EBU Player List Sync (manual, via online window)
+After=bridge-box-app.service
+
+[Service]
+# Manual/on-demand sync (via `bridge sync-players`). Opens a single online
+# window (hotspot down -> client WiFi -> sync -> hotspot restored) around the
+# radio-agnostic sync job, using the shared bb_run_online_window primitive.
+# There is intentionally NO timer for this — it must never run mid-session; it
+# runs in the boot online window (bridge-box-online-tasks) or by this manual
+# command when an admin knows no one is playing.
+Type=oneshot
+User=bridgebox
+Environment=HOME=/home/bridgebox
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/bash -c '. /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh; bb_run_online_window "bash /home/bridgebox/bridge-box/bridge-box-player-sync.sh"'
+StandardOutput=journal
+StandardError=journal

@@ -2,12 +2,15 @@
 # BridgeBox shared WiFi helpers.
 #
 # Single source of truth for switching wlan0 between the hotspot and the client
-# network in wifi.json, and for returning to hotspot mode. Sourced by:
-#   - bridge-box-update.sh   (boot: uses bb_connect_wifi/bb_have_internet for the
-#                             download phase, and bb_return_to_hotspot in its trap)
-#   - bridge-box-os-update.sh and bridge-box-node-upgrade.sh (maintenance: use
-#                             bb_acquire_lock + bb_wifi_online + bb_return_to_hotspot)
-# Keeping this the only implementation means all of them behave identically.
+# network in wifi.json, returning to hotspot mode, and running an "online window"
+# (bb_run_online_window — the fork/join primitive). Sourced by:
+#   - bridge-box-online-tasks.sh (boot: opens ONE window via bb_run_online_window
+#                             around the download + player-sync jobs)
+#   - bridge-box-player-sync.service (manual `bridge sync-players`: one window)
+#   - bridge-box-os-update.sh and bridge-box-node-upgrade.sh (maintenance: still
+#                             hand-wire bb_acquire_lock + bb_wifi_online +
+#                             bb_return_to_hotspot — accepted tech-debt, they
+#                             don't yet use bb_run_online_window)
 #
 # Usage:
 #   source /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
@@ -171,4 +174,67 @@ bb_wifi_online() {
     fi
     echo "Connected to WiFi but still no internet."
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# bb_run_online_window <job-cmd> [<job-cmd> ...]
+#
+# The single "online window" primitive (fork/join): open the window ONCE, run
+# each job sequentially inside it, then close it ONCE. This is the only place
+# the boot path touches the radio, so N network jobs cause exactly one hotspot
+# down/up cycle.
+#
+#   1. Acquire the shared lock (skip everything if another run holds it).
+#   2. Arm an EXIT trap that ALWAYS restores the hotspot + NAT and releases the
+#      lock (once-guarded), no matter how we leave.
+#   3. Bring the box online (bb_wifi_online). If that fails, run NO jobs and
+#      return — the trap still restores the hotspot.
+#   4. Run each job (a shell command string) in sequence. A job's failure is
+#      logged and does NOT stop later jobs (each job is expected to be
+#      self-contained and non-fatal).
+#
+# Each job assumes it is ALREADY online and must NOT touch the radio/lock/trap.
+# The whole window is bounded by BB_WINDOW_DEADLINE seconds (default 1200); if
+# exceeded, the current job is killed and we close the window.
+#
+# Returns 0 if the window opened (jobs attempted), non-zero if it couldn't open
+# (lock held, or could not get online).
+# ---------------------------------------------------------------------------
+bb_run_online_window() {
+    local deadline="${BB_WINDOW_DEADLINE:-1200}"
+
+    if ! bb_acquire_lock; then
+        echo "online-window: could not acquire lock — skipping."
+        return 1
+    fi
+
+    _BB_WINDOW_CLOSED=0
+    _bb_close_window() {
+        [ "${_BB_WINDOW_CLOSED:-0}" = "1" ] && return 0
+        _BB_WINDOW_CLOSED=1
+        bb_return_to_hotspot
+        flock -u 9 2>/dev/null || true
+        exec 9>&- 2>/dev/null || true
+    }
+    trap _bb_close_window EXIT
+
+    if ! bb_wifi_online; then
+        echo "online-window: could not get online — running no jobs."
+        _bb_close_window
+        trap - EXIT
+        return 1
+    fi
+
+    local job
+    for job in "$@"; do
+        echo "online-window: running job: $job"
+        # Bound each job; failures are non-fatal so later jobs still run.
+        if ! timeout "$deadline" bash -c "$job"; then
+            echo "online-window: job failed or timed out (continuing): $job"
+        fi
+    done
+
+    _bb_close_window
+    trap - EXIT
+    return 0
 }

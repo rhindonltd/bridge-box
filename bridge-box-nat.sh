@@ -4,7 +4,7 @@
 # Run as root. Safe to re-run: it flushes and re-adds its own PREROUTING rules,
 # so it can be re-asserted after wlan0 has been switched to client mode and back
 # (NetworkManager rebuilds routing for the shared connection, which can drop
-# these manual redirects). See bridge-box-update.sh return_to_hotspot().
+# these manual redirects). Re-applied by bb_return_to_hotspot in the wifi lib.
 
 set -euo pipefail
 

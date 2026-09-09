@@ -1,7 +1,7 @@
 [Unit]
 Description=BridgeBox Background App Build (Phase 2)
-After=bridge-box-update.service
-Requires=bridge-box-update.service
+After=bridge-box-online-tasks.service
+Requires=bridge-box-online-tasks.service
 
 [Service]
 Type=oneshot

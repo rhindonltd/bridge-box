@@ -1,6 +1,6 @@
 [Unit]
 Description=BridgeBox Data Backup (SQLite online backup)
-After=bridge-box-update.service
+After=bridge-box-online-tasks.service
 
 [Service]
 Type=oneshot
