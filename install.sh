@@ -55,9 +55,14 @@ sudo mkdir -p /usr/local/bridgebox/bin
 
 # Lets bridgebox restart the app service (used by Phase 3 activation and the
 # health check) without broad systemctl rights.
+# --no-block: QUEUE the restart and return immediately. The callers
+# (bridge-box-online-tasks Phase 3, healthcheck) run in contexts ordered around
+# bridge-box-app; a blocking `systemctl restart` there deadlocks (the caller
+# waits for a restart job that can't run until the caller finishes). Queuing
+# avoids that and is fine — nothing needs to wait for the restart to complete.
 sudo tee /usr/local/bridgebox/bin/restart-app.sh > /dev/null <<'EOF'
 #!/bin/bash
-exec /bin/systemctl restart bridge-box-app.service
+exec /bin/systemctl restart --no-block bridge-box-app.service
 EOF
 
 sudo tee /usr/local/bridgebox/bin/reboot.sh > /dev/null <<'EOF'
