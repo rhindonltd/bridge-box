@@ -5,8 +5,9 @@
 # network in wifi.json, returning to hotspot mode, and running an "online window"
 # (bb_run_online_window — the fork/join primitive). Sourced by:
 #   - bridge-box-online-tasks.sh (boot: opens ONE window via bb_run_online_window
-#                             around the download + player-sync jobs)
+#                             around the download + player-sync + movement-sync jobs)
 #   - bridge-box-player-sync.service (manual `bridge sync-players`: one window)
+#   - bridge-box-movement-sync.service (manual `bridge sync-movements`: one window)
 #   - bridge-box-os-update.sh and bridge-box-node-upgrade.sh (maintenance: still
 #                             hand-wire bb_acquire_lock + bb_wifi_online +
 #                             bb_return_to_hotspot — accepted tech-debt, they
