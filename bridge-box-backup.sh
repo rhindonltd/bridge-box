@@ -9,7 +9,9 @@ DATA_DIR="/home/bridgebox/data"
 # Prefer a mounted USB stick if present, else keep backups on disk.
 USB_DIR="/media/bridgebox"
 DISK_BACKUP_DIR="/home/bridgebox/backups"
-LOGFILE="/home/bridgebox/backup.log"
+LOG_DIR="/home/bridgebox/logs"
+LOGFILE="$LOG_DIR/backup.log"
+mkdir -p "$LOG_DIR"
 KEEP=14   # how many backups to retain per database
 
 # Bounded logging.

@@ -7,7 +7,9 @@ set -uo pipefail
 APP_URL="http://127.0.0.1:3000/"
 # If the scorer app exposes a health endpoint, prefer it (falls back to APP_URL).
 HEALTH_URL="http://127.0.0.1:3000/healthz"
-LOGFILE="/home/bridgebox/healthcheck.log"
+LOG_DIR="/home/bridgebox/logs"
+LOGFILE="$LOG_DIR/healthcheck.log"
+mkdir -p "$LOG_DIR"
 
 # Bounded logging.
 MAX_LOG_BYTES=$((2 * 1024 * 1024))

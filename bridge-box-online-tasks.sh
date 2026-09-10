@@ -30,7 +30,9 @@ CURRENT_LINK="$SCORER_DIR/current"
 PREVIOUS_LINK="$SCORER_DIR/previous"
 PENDING_LINK="$SCORER_DIR/pending"
 WIFI_CONFIG="$INSTALL_DIR/wifi.json"
-LOGFILE="$INSTALL_DIR/online-tasks.log"
+LOG_DIR="$INSTALL_DIR/logs"
+LOGFILE="$LOG_DIR/online-tasks.log"
+mkdir -p "$LOG_DIR"
 
 # Shared WiFi lib (provides bb_run_online_window + helpers).
 WIFI_LIB="$BOX_DIR/bridge-box-wifi-lib.sh"

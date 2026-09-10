@@ -150,8 +150,12 @@ npm run build
 
 ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
 
-# --- 6c. Create backups dir ---
+# --- 6c. Create backups + logs dirs ---
+# All the box scripts (root, online-tasks, player/movement-sync, build, update,
+# backup, healthcheck, log-ship) write their logs under $INSTALL_DIR/logs so the
+# home dir stays uncluttered. Each script also mkdir -p's it defensively.
 mkdir -p "$INSTALL_DIR/backups"
+mkdir -p "$INSTALL_DIR/logs"
 
 # --- 7. Install systemd services and timers ---
 echo "Installing systemd service files..."

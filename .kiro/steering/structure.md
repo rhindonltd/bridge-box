@@ -51,13 +51,16 @@ This repo is small and flat — it is the provisioning layer, cloned onto the de
 ├── log-ship/                       # log export state: cursor + exports/ (timestamped export files)
 ├── .provisioned                    # marker: present only after a successful install
 ├── .update.lock                    # flock file for single-instance update runs
-├── root.log                        # bounded (auto-truncated ~5 MB)
-├── online-tasks.log                # bounded (auto-truncated ~5 MB) — boot online window
-├── update.log                      # bounded (auto-truncated ~5 MB) — download job
-├── build.log                       # bounded (auto-truncated ~5 MB) — Phase 2 build
-├── healthcheck.log                 # bounded (auto-truncated ~2 MB)
-├── backup.log                      # bounded (auto-truncated ~2 MB)
-└── player-sync.log                 # bounded (auto-truncated ~2 MB) — EBU player sync
+└── logs/                           # all script logs (each bounded/auto-truncated)
+    ├── root.log                    # bounded (auto-truncated ~5 MB)
+    ├── online-tasks.log            # bounded (auto-truncated ~5 MB) — boot online window
+    ├── update.log                  # bounded (auto-truncated ~5 MB) — download job
+    ├── build.log                   # bounded (auto-truncated ~5 MB) — Phase 2 build
+    ├── healthcheck.log             # bounded (auto-truncated ~2 MB)
+    ├── backup.log                  # bounded (auto-truncated ~2 MB)
+    ├── player-sync.log             # bounded (auto-truncated ~2 MB) — EBU player sync
+    ├── movement-sync.log           # bounded (auto-truncated ~2 MB) — movement list sync
+    └── log-ship.log                # bounded (auto-truncated ~2 MB) — log export runs
 ```
 
 USB backups (when a stick is mounted): `/media/bridgebox/<mount>/bridge-box-backups/`.
