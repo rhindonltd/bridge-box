@@ -129,7 +129,7 @@ How updates work (worth knowing):
 - The app runs as its own service, independent of all this — it keeps serving on the current version
   throughout, and the brief network switch happens at boot before anyone connects (never
   mid-session). You can also trigger the chores manually when idle: `bridge update-now`,
-  `bridge sync-players`.
+  `bridge sync-players`, `bridge sync-movements`.
 
 Give it a minute or two after boot to settle.
 
@@ -290,6 +290,11 @@ back). If a box was provisioned offline, player search returns nothing until the
 sync. Force one now with `bridge sync-players` (needs internet). Details in
 `/home/bridgebox/player-sync.log`.
 
+**Movement list.** The box also keeps a local copy of the movement list, populated during
+provisioning and refreshed in the same boot online window as the player list (and manually via
+`bridge sync-movements`, needs internet). A box provisioned offline gets it on the first successful
+sync. Details in `/home/bridgebox/movement-sync.log`.
+
 **App logs.** The scoring app's own logs go to the system journal (`bridge logs`, or
 `journalctl -u bridge-box-app`). To collect them for analysis, `bridge ship-logs` exports everything
 since the last export to a timestamped file under `/home/bridgebox/log-ship/exports/` (it tracks a
@@ -372,9 +377,10 @@ sudo apt-get -f install
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
 | `bridge-box-app.service` | bridgebox | Runs the scoring app (auto-restarts if it stops) |
-| `bridge-box-online-tasks.service` | bridgebox | Boot: one online window — activate pending update, download a new one, refresh player list |
+| `bridge-box-online-tasks.service` | bridgebox | Boot: one online window — activate pending update, download a new one, refresh player + movement lists |
 | `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
 | `bridge-box-player-sync.service` | bridgebox | Manual only (`bridge sync-players`) — no timer; runs in an online window |
+| `bridge-box-movement-sync.service` | bridgebox | Manual only (`bridge sync-movements`) — no timer; runs in an online window |
 | `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: restart the app if it's not responding |
 | `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
 
@@ -391,6 +397,7 @@ bridge os-update     # apply OS security updates (switches to WiFi, then back)
 bridge node-upgrade 24   # move Node.js to a new major version
 bridge backup-now    # take a data backup now
 bridge sync-players  # update the EBU player list now (needs internet)
+bridge sync-movements # update the movement list now (needs internet)
 bridge ship-logs     # export app logs since last run (local file for now)
 bridge version       # show the running app version
 bridge wifi          # show WiFi config (or: bridge wifi <ssid> <password> [hidden])

@@ -14,6 +14,7 @@
 #   Online window (via bb_run_online_window): run, sequentially —
 #           1. the update DOWNLOAD job (download newer release + npm ci)
 #           2. the player-sync job (refresh EBU players.db)
+#           3. the movement-sync job (refresh the movement list)
 #   The window opens once (hotspot down -> client WiFi), runs both jobs, and
 #   always closes once (back to hotspot), guaranteed by the lib's trap.
 #
@@ -97,7 +98,8 @@ fi
 # sequentially inside the single window; each is non-fatal.
 bb_run_online_window \
     "bash $BOX_DIR/bridge-box-update.sh" \
-    "bash $BOX_DIR/bridge-box-player-sync.sh"
+    "bash $BOX_DIR/bridge-box-player-sync.sh" \
+    "bash $BOX_DIR/bridge-box-movement-sync.sh"
 
 echo "=== BridgeBox online tasks done $(date -Is) ==="
 exit 0

@@ -95,6 +95,13 @@ case "$cmd" in
     echo "Done. Details: tail /home/bridgebox/player-sync.log"
     ;;
 
+  sync-movements)
+    echo "Syncing the movement list now."
+    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
+    sudo systemctl start --wait bridge-box-movement-sync
+    echo "Done. Details: tail /home/bridgebox/movement-sync.log"
+    ;;
+
   wifi-scan)
     # Scan for nearby WiFi networks (via the privileged helper — same path the
     # app uses). Briefly drops the hotspot to scan, then restores it.
@@ -157,6 +164,7 @@ BridgeBox admin — usage: bridge <command>
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
   sync-players  Update the EBU player list now (briefly drops the hotspot; run when idle)
+  sync-movements Update the movement list now (briefly drops the hotspot; run when idle)
   wifi-scan     Scan for nearby WiFi networks (briefly drops the hotspot; run when idle)
   ship-logs     Export app logs since last run (local file for now)
   version       Show the running app version (from /healthz)

@@ -167,6 +167,10 @@ sudo cp "$BOX_DIR/bridge-box-backup.timer" /etc/systemd/system/
 # the sync job in an online window). No player-sync TIMER — sync runs only in
 # the boot online window (bridge-box-online-tasks) or manually, never mid-session.
 sudo cp "$BOX_DIR/bridge-box-player-sync.service" /etc/systemd/system/
+# movement-sync.service mirrors player-sync: manual `bridge sync-movements` path
+# (wraps the sync job in an online window). No timer — boot online window or
+# manual only, never mid-session.
+sudo cp "$BOX_DIR/bridge-box-movement-sync.service" /etc/systemd/system/
 
 # --- 8. Enable and start services ---
 # Guard: never enable the app services against a missing or half-built release.
@@ -203,6 +207,15 @@ sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"   # so the sync writes as bridg
 sudo -u bridgebox env HOME="$INSTALL_DIR" \
     bash "$BOX_DIR/bridge-box-player-sync.sh" || \
     echo "Initial player sync did not complete — it will run on the next online boot."
+
+# --- 8c. Initialise the movement list (soft-deferred) ---
+# Same best-effort pattern as the player list: try once now so the box ships
+# with movements populated. NON-fatal — if there's no connectivity the next
+# boot's online window (bridge-box-online-tasks) will populate it.
+echo "Initialising movement list (best-effort)..."
+sudo -u bridgebox env HOME="$INSTALL_DIR" \
+    bash "$BOX_DIR/bridge-box-movement-sync.sh" || \
+    echo "Initial movement sync did not complete — it will run on the next online boot."
 
 # --- 9. Fix permissions ---
 sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"
