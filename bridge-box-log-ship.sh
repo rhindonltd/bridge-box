@@ -19,8 +19,10 @@ set -uo pipefail
 INSTALL_DIR="/home/bridgebox"
 STATE_DIR="$INSTALL_DIR/log-ship"
 CURSOR_FILE="$STATE_DIR/cursor"
-LOGFILE="$INSTALL_DIR/log-ship.log"
+LOG_DIR="$INSTALL_DIR/logs"
+LOGFILE="$LOG_DIR/log-ship.log"
 CONF="$INSTALL_DIR/log-ship.conf"
+mkdir -p "$LOG_DIR"
 
 # --- Defaults (overridable in log-ship.conf) ---
 # LOG_UNITS: which systemd unit(s) to export. Default: just the app.

@@ -288,12 +288,12 @@ players offline). It's populated during provisioning and refreshed automatically
 **when the box has internet** (it briefly switches to the `wifi.json` network, syncs, and switches
 back). If a box was provisioned offline, player search returns nothing until the first successful
 sync. Force one now with `bridge sync-players` (needs internet). Details in
-`/home/bridgebox/player-sync.log`.
+`/home/bridgebox/logs/player-sync.log`.
 
 **Movement list.** The box also keeps a local copy of the movement list, populated during
 provisioning and refreshed in the same boot online window as the player list (and manually via
 `bridge sync-movements`, needs internet). A box provisioned offline gets it on the first successful
-sync. Details in `/home/bridgebox/movement-sync.log`.
+sync. Details in `/home/bridgebox/logs/movement-sync.log`.
 
 **App logs.** The scoring app's own logs go to the system journal (`bridge logs`, or
 `journalctl -u bridge-box-app`). To collect them for analysis, `bridge ship-logs` exports everything

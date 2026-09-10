@@ -2,7 +2,12 @@
 # BridgeBox root startup — hotspot, firewall, NAT
 
 set -euo pipefail
-LOGFILE="/home/bridgebox/root.log"
+LOG_DIR="/home/bridgebox/logs"
+LOGFILE="$LOG_DIR/root.log"
+# Create the shared logs dir and hand it to bridgebox: this root unit runs first
+# at boot, and the other (bridgebox-user) scripts write their own logs here too.
+mkdir -p "$LOG_DIR"
+chown bridgebox:bridgebox "$LOG_DIR" 2>/dev/null || true
 
 # Bounded logging: truncate to the most recent ~2.5 MB if it grows past ~5 MB,
 # so the log can't slowly fill the disk over the life of the device.

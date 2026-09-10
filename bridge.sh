@@ -92,14 +92,14 @@ case "$cmd" in
     echo "Syncing the EBU player list now."
     echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
     sudo systemctl start --wait bridge-box-player-sync
-    echo "Done. Details: tail /home/bridgebox/player-sync.log"
+    echo "Done. Details: tail /home/bridgebox/logs/player-sync.log"
     ;;
 
   sync-movements)
     echo "Syncing the movement list now."
     echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
     sudo systemctl start --wait bridge-box-movement-sync
-    echo "Done. Details: tail /home/bridgebox/movement-sync.log"
+    echo "Done. Details: tail /home/bridgebox/logs/movement-sync.log"
     ;;
 
   wifi-scan)
@@ -115,7 +115,7 @@ case "$cmd" in
     # go off-box yet, so it needs no internet and won't touch the hotspot.
     echo "Exporting app logs since last run (local file export)..."
     sudo -u bridgebox env HOME=/home/bridgebox bash "$BOX_DIR/bridge-box-log-ship.sh"
-    echo "Done. Exports: /home/bridgebox/log-ship/exports/  (details: tail /home/bridgebox/log-ship.log)"
+    echo "Done. Exports: /home/bridgebox/log-ship/exports/  (details: tail /home/bridgebox/logs/log-ship.log)"
     ;;
 
   version)

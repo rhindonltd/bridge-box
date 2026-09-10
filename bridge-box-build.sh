@@ -21,7 +21,9 @@ SCORER_DIR="$INSTALL_DIR/bridge-box-scorer"
 RELEASES_DIR="$SCORER_DIR/releases"
 PENDING_LINK="$SCORER_DIR/pending"
 CURRENT_LINK="$SCORER_DIR/current"
-LOGFILE="$INSTALL_DIR/build.log"
+LOG_DIR="$INSTALL_DIR/logs"
+LOGFILE="$LOG_DIR/build.log"
+mkdir -p "$LOG_DIR"
 LOCKFILE="$INSTALL_DIR/.update.lock"
 
 # Deps are installed online in Phase 1; this phase only builds (offline).

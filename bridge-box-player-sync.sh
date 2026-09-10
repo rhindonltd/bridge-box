@@ -17,7 +17,9 @@ INSTALL_DIR="/home/bridgebox"
 SCORER_DIR="$INSTALL_DIR/bridge-box-scorer"
 CURRENT_LINK="$SCORER_DIR/current"
 DATA_DIR="$INSTALL_DIR/data"
-LOGFILE="$INSTALL_DIR/player-sync.log"
+LOG_DIR="$INSTALL_DIR/logs"
+LOGFILE="$LOG_DIR/player-sync.log"
+mkdir -p "$LOG_DIR"
 
 # --- Bounded logging ---
 MAX_LOG_BYTES=$((2 * 1024 * 1024))
