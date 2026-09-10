@@ -290,6 +290,13 @@ back). If a box was provisioned offline, player search returns nothing until the
 sync. Force one now with `bridge sync-players` (needs internet). Details in
 `/home/bridgebox/player-sync.log`.
 
+**App logs.** The scoring app's own logs go to the system journal (`bridge logs`, or
+`journalctl -u bridge-box-app`). To collect them for analysis, `bridge ship-logs` exports everything
+since the last export to a timestamped file under `/home/bridgebox/log-ship/exports/` (it tracks a
+cursor, so each run only adds what's new). This is a **local** export for now — nothing leaves the
+box. (Sending them to an external service later is a small change; it would then run in the boot
+online window rather than mid-session, and you'd want to consider that logs may contain player data.)
+
 **Backups.** Score data is backed up hourly and automatically. Backups are stored **on the device**
 (or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you want an
 off-site copy, periodically copy the newest files out of `/home/bridgebox/backups` (or the USB
@@ -384,6 +391,7 @@ bridge os-update     # apply OS security updates (switches to WiFi, then back)
 bridge node-upgrade 24   # move Node.js to a new major version
 bridge backup-now    # take a data backup now
 bridge sync-players  # update the EBU player list now (needs internet)
+bridge ship-logs     # export app logs since last run (local file for now)
 bridge version       # show the running app version
 bridge wifi          # show WiFi config (or: bridge wifi <ssid> <password> [hidden])
 bridge password      # show this box's hotspot SSID + password

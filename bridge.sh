@@ -95,6 +95,15 @@ case "$cmd" in
     echo "Done. Details: tail /home/bridgebox/player-sync.log"
     ;;
 
+  ship-logs)
+    # Export the app's logs since the last run. For now this is a LOCAL export
+    # (a timestamped file under /home/bridgebox/log-ship/exports/) — it does NOT
+    # go off-box yet, so it needs no internet and won't touch the hotspot.
+    echo "Exporting app logs since last run (local file export)..."
+    sudo -u bridgebox env HOME=/home/bridgebox bash "$BOX_DIR/bridge-box-log-ship.sh"
+    echo "Done. Exports: /home/bridgebox/log-ship/exports/  (details: tail /home/bridgebox/log-ship.log)"
+    ;;
+
   version)
     curl -fsS http://localhost:3000/healthz 2>/dev/null || echo "app not responding"
     ;;
@@ -141,6 +150,7 @@ BridgeBox admin — usage: bridge <command>
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
   sync-players  Update the EBU player list now (briefly drops the hotspot; run when idle)
+  ship-logs     Export app logs since last run (local file for now)
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]
   password      Show this box's hotspot SSID + password
