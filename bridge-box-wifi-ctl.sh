@@ -21,6 +21,10 @@ INSTALL_DIR="/home/bridgebox"
 WIFI_CONFIG="$INSTALL_DIR/wifi.json"
 HOTSPOT_CONNECTION="${BB_HOTSPOT_CONNECTION:-bridge-hotspot}"
 NMCLI_TIMEOUT="${BB_NMCLI_TIMEOUT:-45}"
+LOCKFILE="${BB_LOCKFILE:-$INSTALL_DIR/.update.lock}"
+# Dedicated throwaway profile for app-driven credential testing. NEVER touch
+# the real hotspot or client profiles from the test verbs.
+TEST_PROFILE="bridge-box-wifi-test"
 
 verb="${1:-}"
 
@@ -122,8 +126,103 @@ return_to_hotspot() {
     fi
 }
 
+# ===========================================================================
+# App-facing verbs (scan / test-connect / test-cleanup).
+#
+# The scorer app (running as bridgebox) can't drive NetworkManager directly, so
+# it calls these via `sudo -n wifi-ctl.sh <verb>`. They are for the app's
+# "connect this box to WiFi" flow: scan for networks, and TEST candidate
+# credentials against a throwaway `bridge-box-wifi-test` profile before the app
+# writes the chosen network to wifi.json. They:
+#   - take the shared network lock (don't race the boot online window),
+#   - drop the hotspot (single radio) and ALWAYS restore it on exit (trap),
+#   - only ever touch the TEST_PROFILE — never the real hotspot/client config.
+# The app does read-only nmcli (diagnostics) and `command -v nmcli` itself.
+# ===========================================================================
+
+# Acquire the shared lock on fd 8 (fd 9 is used elsewhere). Non-blocking-ish:
+# wait briefly, then fail so the app gets a clear "busy" rather than hanging.
+_acquire_lock() {
+    exec 8>"$LOCKFILE" || return 1
+    if ! flock -w 30 8; then
+        echo "wifi-ctl: another network operation is in progress — try again shortly." >&2
+        return 1
+    fi
+}
+
+# Restore hotspot + release lock, once, on exit. Set by the app verbs.
+_APP_RESTORED=0
+_app_restore() {
+    [ "$_APP_RESTORED" = "1" ] && return 0
+    _APP_RESTORED=1
+    return_to_hotspot
+    flock -u 8 2>/dev/null || true
+    exec 8>&- 2>/dev/null || true
+}
+
+do_scan() {
+    _acquire_lock || exit 1
+    trap _app_restore EXIT
+    hotspot_down_for_client
+    # Emit the RAW `nmcli device wifi list --rescan yes` output verbatim so the
+    # app's existing parser needs no change. A couple of rescans help the
+    # Broadcom radio populate results after leaving AP mode.
+    timeout "$NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$IFACE" 2>/dev/null || true
+    sleep 3
+    timeout "$NMCLI_TIMEOUT" nmcli device wifi list --rescan yes
+}
+
+do_test_connect() {
+    local ssid="$1" password="$2" hidden="${3:-no}"
+    if [ -z "$ssid" ] || [ -z "$password" ]; then
+        echo "wifi-ctl: test-connect requires <ssid> <password> [hidden]" >&2
+        exit 2
+    fi
+    _acquire_lock || exit 1
+    trap _app_restore EXIT
+    hotspot_down_for_client
+
+    # Build the throwaway test profile fresh each time.
+    timeout "$NMCLI_TIMEOUT" nmcli connection delete "$TEST_PROFILE" 2>/dev/null || true
+    if ! timeout "$NMCLI_TIMEOUT" nmcli connection add type wifi con-name "$TEST_PROFILE" \
+            ifname "$IFACE" ssid "$ssid" 2>&1; then
+        echo "wifi-ctl: could not create test profile"; exit 1
+    fi
+    timeout "$NMCLI_TIMEOUT" nmcli connection modify "$TEST_PROFILE" \
+        wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password" \
+        connection.autoconnect no 2>/dev/null || true
+    [ "$hidden" = "yes" ] && timeout "$NMCLI_TIMEOUT" nmcli connection modify "$TEST_PROFILE" \
+        802-11-wireless.hidden yes 2>/dev/null || true
+
+    echo "wifi-ctl: bringing up test profile for '$ssid'..."
+    if timeout "$NMCLI_TIMEOUT" nmcli connection up "$TEST_PROFILE" 2>&1; then
+        # Verify actual internet, not just association.
+        if timeout 15 ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+            echo "TEST_RESULT: ok (connected + internet)"
+        else
+            echo "TEST_RESULT: connected-no-internet (associated but no route out)"
+        fi
+    else
+        echo "TEST_RESULT: failed (could not connect — check password/SSID)"
+    fi
+    # Tear the test profile down/out; the trap then restores the hotspot.
+    timeout "$NMCLI_TIMEOUT" nmcli connection down "$TEST_PROFILE" 2>/dev/null || true
+    timeout "$NMCLI_TIMEOUT" nmcli connection delete "$TEST_PROFILE" 2>/dev/null || true
+}
+
+do_test_cleanup() {
+    _acquire_lock || exit 1
+    trap _app_restore EXIT
+    timeout "$NMCLI_TIMEOUT" nmcli connection down "$TEST_PROFILE" 2>/dev/null || true
+    timeout "$NMCLI_TIMEOUT" nmcli connection delete "$TEST_PROFILE" 2>/dev/null || true
+    echo "wifi-ctl: test profile cleaned up."
+}
+
 case "$verb" in
-    connect) connect_client ;;
-    hotspot) return_to_hotspot ;;
-    *) echo "usage: bridge-box-wifi-ctl.sh {connect|hotspot}" >&2; exit 2 ;;
+    connect)      connect_client ;;
+    hotspot)      return_to_hotspot ;;
+    scan)         do_scan ;;
+    test-connect) shift; do_test_connect "$@" ;;
+    test-cleanup) do_test_cleanup ;;
+    *) echo "usage: bridge-box-wifi-ctl.sh {connect|hotspot|scan|test-connect <ssid> <pass> [hidden]|test-cleanup}" >&2; exit 2 ;;
 esac

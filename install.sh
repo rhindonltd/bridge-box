@@ -77,10 +77,10 @@ sudo tee /usr/local/bridgebox/bin/apply-nat.sh > /dev/null <<'EOF'
 exec /bin/bash /home/bridgebox/bridge-box/bridge-box-nat.sh
 EOF
 
-# Fixed-path wrapper for privileged WiFi control (client connect / return to
-# hotspot). Lets the boot update service (running as bridgebox) switch networks
-# via root, without granting bridgebox broad NetworkManager rights. Passes the
-# verb (connect|hotspot) through.
+# Fixed-path wrapper for privileged WiFi control. Lets the boot update service
+# AND the scorer app (both running as bridgebox) drive NetworkManager via root,
+# without granting bridgebox broad NM rights. The wrapped script validates the
+# verb; sudoers below allowlists exactly the permitted verbs.
 sudo tee /usr/local/bridgebox/bin/wifi-ctl.sh > /dev/null <<'EOF'
 #!/bin/bash
 exec /bin/bash /home/bridgebox/bridge-box/bridge-box-wifi-ctl.sh "$@"
@@ -90,12 +90,20 @@ sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
 SUDOERS_FILE="/etc/sudoers.d/bridgebox"
+# NOTE on arg matching: a bare command path allows ANY args; a path + literal
+# args restricts to exactly those. `scan`/`hotspot`/`connect`/`test-cleanup`
+# are pinned exactly. `test-connect` takes an SSID/password, so it's allowed
+# with a trailing "" (sudo syntax for "any args may follow") — still restricted
+# to the test-connect verb of this one script.
 sudo bash -c "cat > $SUDOERS_FILE" <<EOF
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-app.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh connect
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh hotspot
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh scan
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh test-cleanup
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh test-connect ""
 EOF
 
 sudo chmod 440 $SUDOERS_FILE

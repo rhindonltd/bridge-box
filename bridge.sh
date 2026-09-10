@@ -95,6 +95,13 @@ case "$cmd" in
     echo "Done. Details: tail /home/bridgebox/player-sync.log"
     ;;
 
+  wifi-scan)
+    # Scan for nearby WiFi networks (via the privileged helper — same path the
+    # app uses). Briefly drops the hotspot to scan, then restores it.
+    echo "Scanning for WiFi networks (briefly drops the hotspot; run when idle)..."
+    sudo -n /usr/local/bridgebox/bin/wifi-ctl.sh scan
+    ;;
+
   ship-logs)
     # Export the app's logs since the last run. For now this is a LOCAL export
     # (a timestamped file under /home/bridgebox/log-ship/exports/) — it does NOT
@@ -150,6 +157,7 @@ BridgeBox admin — usage: bridge <command>
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
   sync-players  Update the EBU player list now (briefly drops the hotspot; run when idle)
+  wifi-scan     Scan for nearby WiFi networks (briefly drops the hotspot; run when idle)
   ship-logs     Export app logs since last run (local file for now)
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]
