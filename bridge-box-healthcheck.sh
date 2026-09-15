@@ -23,11 +23,12 @@ fi
 
 log() { echo "$(date -Is) $*" >> "$LOGFILE"; }
 
-# Don't act while the online-tasks window or a manual sync is running: those may
-# briefly switch wlan0 / restart the app, which would look unhealthy and trigger
-# a needless restart. Skip if either is active.
-if systemctl is-active --quiet bridge-box-online-tasks.service \
-   || systemctl is-active --quiet bridge-box-player-sync.service; then
+# Don't act while the boot online-tasks orchestrator is running: its Phase-3
+# step may restart the app (to activate a pending release), which would briefly
+# look unhealthy and trigger a needless second restart. Network jobs no longer
+# disturb the app or hotspot (separate radios), so only the activate step
+# matters — hence we only skip for online-tasks, not the sync services.
+if systemctl is-active --quiet bridge-box-online-tasks.service; then
     exit 0
 fi
 

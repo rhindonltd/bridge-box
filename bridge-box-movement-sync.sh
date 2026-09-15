@@ -3,10 +3,9 @@
 #
 # Runs the app's compiled, standalone sync command (dist/sync-movements.js),
 # which downloads the movement definitions and writes them into the app's DB.
-# This is a "job" run INSIDE the online window opened by
-# bridge-box-online-tasks.sh (or the manual `bridge sync-movements`, which also
-# wraps it in a window). It ASSUMES the box is already online — it does NOT
-# touch the radio, the lock, or traps.
+# This is a "job" run by bridge-box-online-tasks.sh (or the manual
+# `bridge sync-movements`), which ensures the client link is online first. It
+# ASSUMES the box is already online — it does NOT touch the radio or any lock.
 #
 # The app owns the fetch/parse/DB write; the sync command is self-migrating,
 # idempotent and guarded (a truncated download won't corrupt the DB). This job

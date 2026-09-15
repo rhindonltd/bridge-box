@@ -2,8 +2,10 @@
 Description=BridgeBox Boot Online Tasks (activate update, download, player sync)
 After=bridge-box-root.service
 Requires=bridge-box-root.service
-# Run before the app so a pending release is activated and the boot online
-# window (download + player sync) happens BEFORE anyone is using the app.
+# Run before the app so a pending release is activated and the boot network
+# jobs (download + player/movement sync) happen BEFORE anyone is using the app.
+# (With dual radios these no longer disturb the hotspot, but boot is still the
+# natural place to run them.)
 Before=bridge-box-app.service
 
 [Service]

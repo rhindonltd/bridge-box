@@ -10,9 +10,10 @@
 # Usage (run on the device, no game in progress):
 #   sudo /home/bridgebox/bridge-box/bridge-box-node-upgrade.sh 24
 #
-# It switches to the wifi.json network for internet if needed (returning to the
-# hotspot afterwards), installs the new Node major, and rebuilds the current
-# app release against it so nothing is left compiled against the old runtime.
+# It uses the client radio for internet (the wifi.json network, brought up if
+# not already connected — the hotspot on the other radio is unaffected),
+# installs the new Node major, and rebuilds the current app release against it
+# so nothing is left compiled against the old runtime.
 
 set -euo pipefail
 
@@ -28,18 +29,14 @@ if ! [[ "$TARGET_MAJOR" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-# Coordinate with the update service and bring the box online (via the
-# wifi.json client network if not already connected); always return to hotspot
-# mode afterwards.
+# Make sure the box is online (the dedicated client radio is normally already
+# connected from boot; this is a cheap re-check / best-effort bring-up via
+# wifi.json). The hotspot is on a separate radio and is unaffected — no lock, no
+# return-to-hotspot needed any more.
 # shellcheck source=bridge-box-wifi-lib.sh
 . /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
-if ! bb_acquire_lock; then
-    echo "Aborting — try again shortly." >&2
-    exit 1
-fi
-trap bb_return_to_hotspot EXIT
 if ! bb_wifi_online; then
-    echo "Could not get the box online (check wifi.json). Aborting." >&2
+    echo "Could not get the box online (check wifi.json / client adapter). Aborting." >&2
     exit 1
 fi
 

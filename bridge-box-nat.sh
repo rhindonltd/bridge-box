@@ -1,10 +1,9 @@
 #!/bin/bash
 # BridgeBox NAT / port-redirect rules (idempotent).
-# Redirects guest HTTP/HTTPS on the hotspot interface to the app on APP_PORT.
-# Run as root. Safe to re-run: it flushes and re-adds its own PREROUTING rules,
-# so it can be re-asserted after wlan0 has been switched to client mode and back
-# (NetworkManager rebuilds routing for the shared connection, which can drop
-# these manual redirects). Re-applied by bb_return_to_hotspot in the wifi lib.
+# Redirects guest HTTP/HTTPS on the AP (hotspot) interface to the app on
+# APP_PORT. IFACE must be the AP interface (wlan0) — NOT the client radio.
+# Run as root. Safe to re-run: it flushes and re-adds its own PREROUTING rules.
+# Applied once at boot by bridge-box-root.sh; also exposed via apply-nat.sh.
 
 set -euo pipefail
 
