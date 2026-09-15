@@ -22,17 +22,25 @@ When you're done, the Pi will:
 ## Before you start — what you need
 
 - A **Raspberry Pi** (Pi 4 or newer recommended) with a power supply.
+- **Two WiFi adapters:**
+  - the Pi's **built-in WiFi** (Broadcom `brcmfmac`, usually `wlan0`) — this becomes the guest
+    **hotspot** and stays a hotspot permanently;
+  - a **USB WiFi adapter** (a Ralink **mt7601U** stick, usually `wlan1`) — this is the box's own
+    **internet link**, used to pull app/player/movement updates.
+  The two radios run at the same time, so the box can be online for updates **without** ever
+  dropping the guest hotspot.
 - An **SSD** (the device is designed to run from an SSD, not an SD card) with a fresh install of
   **Raspberry Pi OS (64-bit, "Bookworm" or newer)**. Raspberry Pi OS uses NetworkManager by
   default, which this setup relies on.
 - A way to reach the Pi to run commands: either a keyboard + monitor, or SSH from another computer.
 - The Pi connected to the internet **for the install only** (Ethernet cable is easiest and most
-  reliable; WiFi also works). After install it runs offline.
+  reliable; the USB WiFi adapter also works). After install it runs offline unless you give it
+  `wifi.json` (Step 6).
 - About 15–20 minutes, most of which is unattended downloading/building.
 
-> The Pi's built-in WiFi (`wlan0`) becomes the guest hotspot, so for the install itself prefer a
-> wired Ethernet connection. If you must use WiFi for the install, that's fine — the install
-> finishes by switching `wlan0` into hotspot mode.
+> Plug the USB WiFi adapter in **before** you start so the OS names it consistently (usually
+> `wlan1`). For the install itself, a wired Ethernet connection is simplest. If the adapter comes up
+> with a different name, you can tell the box about it in `interfaces.conf` (see Step 6).
 
 ---
 
@@ -107,28 +115,28 @@ sudo reboot
 ```
 
 On reboot the device runs its startup automatically:
-- `bridge-box-root` (as root) brings up the hotspot, firewall/NAT, and sets the hostname to
-  `bridge`.
-- `bridge-box-online-tasks` (as `bridgebox`) does all the network chores in **one** short online
-  window (only if `wifi.json` is present): it activates any update that was built last session, then
-  briefly switches to your WiFi to **download** any newer app version and **refresh the EBU player
-  list**, then switches back to the hotspot. It does **not** run the app.
+- `bridge-box-root` (as root) brings up the hotspot on the built-in radio, the firewall/NAT, and
+  sets the hostname to `bridge`. If `wifi.json` is present, it also connects the **USB radio** to
+  your WiFi and leaves it connected — so the box is online **and** hotspotting at the same time.
+- `bridge-box-online-tasks` (as `bridgebox`) does the network chores (only if `wifi.json` is
+  present): it activates any update that was built last session, then **downloads** any newer app
+  version and **refreshes the EBU player + movement lists** over the USB radio. The hotspot is never
+  touched. It does **not** run the app.
 - `bridge-box-app` runs the scoring app itself, supervised by the system — it starts at boot and is
   automatically restarted if it ever stops.
 - `bridge-box-build` (as `bridgebox`) quietly builds a freshly-downloaded version in the background;
   that version goes live the **next** time the box is switched on.
 
 How updates work (worth knowing):
-- The box only does network chores (update download, player-list refresh) **at switch-on**, in one
-  window **before anyone is using it** — never on a timer that could interrupt a session. This suits
-  a device that's unplugged and put away between sessions.
-- That window **downloads the new version and fetches its dependencies** while online (needs a
-  working `wifi.json`, can take a few minutes); the slower **compile** happens in the background
-  afterwards, and the new version goes live at the *next* switch-on. So a release lands one session
-  after it's published. An offline box (no `wifi.json`) skips all this.
+- Because the box has a **separate** radio for its own internet, going online never disturbs the
+  guest hotspot. The network chores still run **at switch-on** (before anyone connects) as the
+  natural time to do them, but they're harmless even if they ran during play.
+- Startup **downloads the new version and fetches its dependencies** while online (needs a working
+  `wifi.json`, can take a few minutes); the slower **compile** happens in the background afterwards,
+  and the new version goes live at the *next* switch-on. So a release lands one session after it's
+  published. An offline box (no `wifi.json`) skips all this.
 - The app runs as its own service, independent of all this — it keeps serving on the current version
-  throughout, and the brief network switch happens at boot before anyone connects (never
-  mid-session). You can also trigger the chores manually when idle: `bridge update-now`,
+  throughout. You can also trigger the chores manually at any time: `bridge update-now`,
   `bridge sync-players`, `bridge sync-movements`.
 
 Give it a minute or two after boot to settle.
@@ -188,10 +196,25 @@ EOF
 ```
 
 - Set `"hidden": "yes"` only if your network doesn't broadcast its name.
-- On each switch-on the box connects, downloads any newer app version, and returns to the hotspot;
-  it builds that version in the background and activates it on the following switch-on (with
-  automatic rollback if the new version turns out not to start). So updates land one session later.
+- At boot the box connects the **USB radio** to this network and keeps it connected alongside the
+  hotspot; on each switch-on it downloads any newer app version, builds it in the background, and
+  activates it on the following switch-on (with automatic rollback if the new version turns out not
+  to start). So updates land one session later. The guest hotspot is unaffected throughout.
 - The file holds your WiFi password in plaintext; the box tightens it to `chmod 600` automatically.
+
+**If your USB adapter isn't `wlan1`.** The box assumes the built-in radio is `wlan0` (hotspot) and
+the USB adapter is `wlan1` (internet). If your adapter enumerates under a different name (check with
+`ip link` / `nmcli device`), tell the box about it in `/home/bridgebox/interfaces.conf`:
+
+```bash
+cat > /home/bridgebox/interfaces.conf <<'EOF'
+AP_IFACE="wlan0"
+CLIENT_IFACE="wlan1"
+EOF
+sudo systemctl restart bridge-box-root   # or reboot
+```
+
+Leave this file out entirely to accept the `wlan0`/`wlan1` defaults.
 
 **Pinning the app version (optional).** By default the box tracks the `main` branch. To pin a
 device (or a fleet) to a specific released version for reproducibility, create
@@ -204,7 +227,8 @@ echo 'RELEASE_REF="v1.4.0"' > /home/bridgebox/release.conf
 `RELEASE_REF` can be a branch or a tag. The box deploys the exact commit that ref points to.
 
 To force an update check now (downloads a newer version; it still builds in the background and goes
-live at the next switch-on) — this briefly drops the hotspot, so run it when no one is playing:
+live at the next switch-on). This uses the USB radio, so it does **not** drop the hotspot and is
+safe to run any time:
 
 ```bash
 bridge update-now
@@ -254,9 +278,9 @@ sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh
 sudo reboot   # if it says the kernel changed
 ```
 
-You don't need to connect the box to the internet first: if it isn't already online, the script
-temporarily switches to the WiFi network in `wifi.json`, does the update, and switches back to the
-hotspot automatically. (It needs a valid `wifi.json` — see Step 6 — or an Ethernet cable.)
+You don't need to connect the box to the internet first: the USB radio is normally already online
+from boot, and if not the script brings it up from `wifi.json`. The hotspot (the other radio) stays
+up throughout. (It needs a valid `wifi.json` — see Step 6 — or an Ethernet cable.)
 
 **Node.js version.** Node is installed from the NodeSource repository, pinned to a major version
 (24 by default). Routine OS updates keep it patched *within* that major but never jump to a new one
@@ -269,9 +293,9 @@ curl -f http://localhost:3000/healthz                           # confirm the ap
 ```
 
 The script re-points the package source and rebuilds the current app release against the new Node
-so nothing is left compiled against the old version. Like the OS-update script, it will switch to
-the `wifi.json` network for internet if needed and return to the hotspot afterwards. Don't do this
-mid-session.
+so nothing is left compiled against the old version. Like the OS-update script, it uses the USB
+radio for internet (bringing it up from `wifi.json` if needed); the hotspot is unaffected. It does
+restart the app at the end, so prefer running it when no one is playing.
 
 **Captive portal (auto-appearing app).** By default the box redirects all guest DNS to itself, so
 opening any web address shows the app and most phones pop it up automatically on join. This does
@@ -284,14 +308,13 @@ sudo systemctl restart bridge-box-root   # or reboot
 ```
 
 **Player list (EBU).** The box keeps a local copy of the EBU player list (so directors can search
-players offline). It's populated during provisioning and refreshed automatically about once a day
-**when the box has internet** (it briefly switches to the `wifi.json` network, syncs, and switches
-back). If a box was provisioned offline, player search returns nothing until the first successful
-sync. Force one now with `bridge sync-players` (needs internet). Details in
-`/home/bridgebox/logs/player-sync.log`.
+players offline). It's populated during provisioning and refreshed at each switch-on **when the box
+has internet** (over the USB radio; the hotspot stays up). If a box was provisioned offline, player
+search returns nothing until the first successful sync. Force one now with `bridge sync-players`
+(needs internet). Details in `/home/bridgebox/logs/player-sync.log`.
 
 **Movement list.** The box also keeps a local copy of the movement list, populated during
-provisioning and refreshed in the same boot online window as the player list (and manually via
+provisioning and refreshed at each switch-on alongside the player list (and manually via
 `bridge sync-movements`, needs internet). A box provisioned offline gets it on the first successful
 sync. Details in `/home/bridgebox/logs/movement-sync.log`.
 
@@ -351,6 +374,8 @@ sudo apt-get -f install
 ## Quick reference
 
 **Network / access**
+- Two radios: built-in Broadcom (`wlan0`) = permanent hotspot; USB mt7601U (`wlan1`) = internet
+  link. Override names in `/home/bridgebox/interfaces.conf` if needed.
 - Hotspot SSID: `BridgeBox-XXXX` (unique per device); password defaults to `bridgebox`, overridable
   via `hotspot.conf` — current value in `/home/bridgebox/hotspot-credentials.txt`
 - App URL for guests: `http://bridge.local` (ports 80/443 → app on 3000)
@@ -366,6 +391,7 @@ sudo apt-get -f install
 - Optional hotspot password override: `/home/bridgebox/hotspot.conf` (`HOTSPOT_PASS="..."`)
 - Optional version pin: `/home/bridgebox/release.conf` (`RELEASE_REF="..."`)
 - Optional captive-portal toggle: `/home/bridgebox/captive.conf` (`CAPTIVE_PORTAL="no"`)
+- Optional interface-name override: `/home/bridgebox/interfaces.conf` (`AP_IFACE=`, `CLIENT_IFACE=`)
 - Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
   `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
@@ -377,7 +403,7 @@ sudo apt-get -f install
 |---|---|---|
 | `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
 | `bridge-box-app.service` | bridgebox | Runs the scoring app (auto-restarts if it stops) |
-| `bridge-box-online-tasks.service` | bridgebox | Boot: one online window — activate pending update, download a new one, refresh player + movement lists |
+| `bridge-box-online-tasks.service` | bridgebox | Boot: activate pending update, download a new one, refresh player + movement lists (over the USB radio; hotspot untouched) |
 | `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
 | `bridge-box-player-sync.service` | bridgebox | Manual only (`bridge sync-players`) — no timer; runs in an online window |
 | `bridge-box-movement-sync.service` | bridgebox | Manual only (`bridge sync-movements`) — no timer; runs in an online window |
@@ -393,7 +419,7 @@ bridge status        # is the app running? (service status + health check)
 bridge logs          # follow the app logs (Ctrl-C to stop)
 bridge restart       # restart the app
 bridge update-now    # check for an app update now (goes live next switch-on)
-bridge os-update     # apply OS security updates (switches to WiFi, then back)
+bridge os-update     # apply OS security updates (uses the USB radio for internet)
 bridge node-upgrade 24   # move Node.js to a new major version
 bridge backup-now    # take a data backup now
 bridge sync-players  # update the EBU player list now (needs internet)
@@ -411,7 +437,11 @@ bridge-box-online-tasks -b`).
 
 **Common issues**
 - *No hotspot after boot:* check `journalctl -u bridge-box-root -b`; ensure the Pi's OS uses
-  NetworkManager and `wlan0` exists.
+  NetworkManager and the hotspot radio (`wlan0`) exists.
+- *Box never gets online for updates:* confirm the USB adapter is present and named as expected
+  (`nmcli device`, `ip link`); if it's not `wlan1`, set `CLIENT_IFACE` in `interfaces.conf`. Check
+  `journalctl -u bridge-box-root -b` for the client bring-up line and
+  `/home/bridgebox/logs/update.log`.
 - *Page won't load but hotspot works:* check `bridge logs` (or `systemctl status bridge-box-app`) and `curl .../healthz` on the Pi.
 - *Update never happens:* verify `wifi.json` is valid JSON with a reachable network; the box only
   updates when it actually gets internet.

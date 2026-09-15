@@ -21,14 +21,27 @@ if [ -f "$LOGFILE" ]; then
 fi
 exec > >(tee -a "$LOGFILE") 2>&1
 
-IFACE="wlan0"
+# --- Interface roles (dual-adapter) ---
+# This box has TWO WiFi radios and they run CONCURRENTLY:
+#   AP_IFACE     — the onboard Broadcom (brcmfmac), a PERMANENT hotspot (AP).
+#   CLIENT_IFACE — the USB Ralink mt7601U, the client/internet link (wifi.json).
+# They never contend, so the hotspot is never taken down to reach the internet.
+# Both defaults can be overridden in /home/bridgebox/interfaces.conf (e.g. if the
+# kernel names the USB adapter differently). AP_IFACE feeds NAT + captive; the
+# client link is brought up here and left up.
+AP_IFACE="wlan0"
+CLIENT_IFACE="wlan1"
+[ -f /home/bridgebox/interfaces.conf ] && . /home/bridgebox/interfaces.conf
+IFACE="$AP_IFACE"   # NAT/captive/hotspot below all use the AP interface
+
 APP_PORT=3000
 CONNECTION_NAME="bridge-hotspot"
 NEW_HOSTNAME="bridge"
 
 echo "=== BridgeBox root setup ==="
+echo "Interfaces: AP=$AP_IFACE (hotspot), client=$CLIENT_IFACE (internet)"
 
-# Give NetworkManager/the radio a moment to be ready at boot before we touch it.
+# Give NetworkManager/the radios a moment to be ready at boot before we touch them.
 nmcli networking connectivity check >/dev/null 2>&1 || true
 sleep 3
 
@@ -93,9 +106,32 @@ grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1"
 IFACE="$IFACE" HOTSPOT_CONNECTION="$CONNECTION_NAME" bash /home/bridgebox/bridge-box/bridge-box-captive.sh || \
     echo "WARNING: captive portal setup failed — app still reachable by typing bridge.local."
 
-# NAT / port redirect (shared, idempotent script — same one re-applied after an
-# update cycle switches wlan0 and returns to hotspot mode).
+# NAT / port redirect (shared, idempotent script). Guest traffic on the AP
+# interface is redirected to the app; the client radio's traffic is untouched.
 IFACE="$IFACE" APP_PORT="$APP_PORT" bash /home/bridgebox/bridge-box/bridge-box-nat.sh
+
+# Bring the client radio (CLIENT_IFACE) onto the wifi.json network and LEAVE IT
+# UP. With a second, dedicated radio there's no reason to connect on demand and
+# disconnect — the internet link can just stay up alongside the hotspot. This is
+# best-effort: if there's no wifi.json, no network, or no client adapter, the
+# box still serves fine over the hotspot (offline-first). The connect runs as
+# root here (boot, before the app) via the shared lib's root path.
+if [ -f /home/bridgebox/wifi.json ]; then
+    if [ -e "/sys/class/net/$CLIENT_IFACE" ]; then
+        echo "Bringing client radio $CLIENT_IFACE onto the wifi.json network..."
+        # shellcheck source=bridge-box-wifi-lib.sh
+        if . /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh 2>/dev/null; then
+            BB_IFACE="$CLIENT_IFACE" bb_connect_wifi || \
+                echo "WARNING: client WiFi connect failed — box stays hotspot-only until it succeeds."
+        else
+            echo "WARNING: wifi lib missing — skipping client WiFi bring-up."
+        fi
+    else
+        echo "No client adapter ($CLIENT_IFACE) present — hotspot-only box."
+    fi
+else
+    echo "No wifi.json — offline box, not bringing up a client link."
+fi
 
 sudo hostnamectl set-hostname bridge
 sudo sed -i "s/127\.0\.1\.1\s\+.*/127.0.1.1\t$NEW_HOSTNAME/" /etc/hosts

@@ -167,13 +167,12 @@ sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.timer" /etc/systemd/system/
-# player-sync.service is used by the manual `bridge sync-players` path (it wraps
-# the sync job in an online window). No player-sync TIMER — sync runs only in
-# the boot online window (bridge-box-online-tasks) or manually, never mid-session.
+# player-sync.service is used by the manual `bridge sync-players` path (it
+# ensures the client link is online, then runs the sync job). No player-sync
+# TIMER — sync runs at boot (bridge-box-online-tasks) or manually.
 sudo cp "$BOX_DIR/bridge-box-player-sync.service" /etc/systemd/system/
-# movement-sync.service mirrors player-sync: manual `bridge sync-movements` path
-# (wraps the sync job in an online window). No timer — boot online window or
-# manual only, never mid-session.
+# movement-sync.service mirrors player-sync: manual `bridge sync-movements`
+# path. No timer — boot online tasks or manual only.
 sudo cp "$BOX_DIR/bridge-box-movement-sync.service" /etc/systemd/system/
 
 # --- 8. Enable and start services ---
@@ -188,9 +187,10 @@ if [ ! -e "$CURRENT_LINK" ]; then
 fi
 
 sudo systemctl daemon-reload
-# Boot chain: root -> online-tasks (activate + download + player-sync, one
-# online window) -> app -> build. bridge-box-online-tasks and build fire at
-# boot via their ordering; player-sync.service has no timer (manual/boot only).
+# Boot chain: root (hotspot on AP radio + client link on the USB radio) ->
+# online-tasks (activate + download + player/movement sync) -> app -> build.
+# bridge-box-online-tasks and build fire at boot via their ordering;
+# player-sync.service has no timer (manual/boot only).
 sudo systemctl enable bridge-box-root bridge-box-online-tasks bridge-box-build bridge-box-app
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
 sudo systemctl start bridge-box-root
@@ -203,7 +203,7 @@ sudo systemctl start bridge-box-backup.timer
 # --- 8b. Initialise the EBU player list (soft-deferred) ---
 # Try once now so the box ships with a populated players.db. NON-fatal: if
 # there's no connectivity the box still provisions fine, and the next boot's
-# online window (bridge-box-online-tasks) will populate it. During install the
+# online tasks (bridge-box-online-tasks) will populate it. During install the
 # box is typically already online (that's how we're fetching everything), so the
 # sync job runs directly; if not, it no-ops safely.
 echo "Initialising EBU player list (best-effort)..."
@@ -215,7 +215,7 @@ sudo -u bridgebox env HOME="$INSTALL_DIR" \
 # --- 8c. Initialise the movement list (soft-deferred) ---
 # Same best-effort pattern as the player list: try once now so the box ships
 # with movements populated. NON-fatal — if there's no connectivity the next
-# boot's online window (bridge-box-online-tasks) will populate it.
+# boot's online tasks (bridge-box-online-tasks) will populate it.
 echo "Initialising movement list (best-effort)..."
 sudo -u bridgebox env HOME="$INSTALL_DIR" \
     bash "$BOX_DIR/bridge-box-movement-sync.sh" || \

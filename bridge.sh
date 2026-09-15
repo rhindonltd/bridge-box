@@ -38,11 +38,11 @@ case "$cmd" in
     ;;
 
   update-now)
-    echo "Checking for an app update now (downloads + installs deps in one online window)."
-    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
-    # The online-tasks orchestrator opens ONE window and runs the download job
-    # (+ player sync); the build then runs to completion. Both blocking (--wait)
-    # so they don't overlap on the radio/lock. The new version activates next boot.
+    echo "Checking for an app update now (downloads + installs deps)."
+    # The client radio is a separate adapter, so this does NOT drop the hotspot
+    # and is safe to run any time. The online-tasks orchestrator runs the
+    # download job (+ syncs); the build then runs to completion. Both blocking
+    # (--wait) so they don't overlap. The new version activates next boot.
     sudo systemctl start --wait bridge-box-online-tasks
     sudo systemctl start --wait bridge-box-build
     echo "Done. The new version (if any) activates on next switch-on."
@@ -89,23 +89,21 @@ case "$cmd" in
     ;;
 
   sync-players)
-    echo "Syncing the EBU player list now."
-    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
+    echo "Syncing the EBU player list now (uses the client radio; hotspot stays up)."
     sudo systemctl start --wait bridge-box-player-sync
     echo "Done. Details: tail /home/bridgebox/logs/player-sync.log"
     ;;
 
   sync-movements)
-    echo "Syncing the movement list now."
-    echo "NOTE: this briefly drops the hotspot to go online — run it when no one is playing."
+    echo "Syncing the movement list now (uses the client radio; hotspot stays up)."
     sudo systemctl start --wait bridge-box-movement-sync
     echo "Done. Details: tail /home/bridgebox/logs/movement-sync.log"
     ;;
 
   wifi-scan)
     # Scan for nearby WiFi networks (via the privileged helper — same path the
-    # app uses). Briefly drops the hotspot to scan, then restores it.
-    echo "Scanning for WiFi networks (briefly drops the hotspot; run when idle)..."
+    # app uses). Scans on the client radio; the hotspot (other radio) stays up.
+    echo "Scanning for WiFi networks on the client radio (hotspot stays up)..."
     sudo -n /usr/local/bridgebox/bin/wifi-ctl.sh scan
     ;;
 
@@ -159,13 +157,13 @@ BridgeBox admin — usage: bridge <command>
   logs          Follow the app logs (Ctrl-C to stop)
   restart       Restart the app
   update-now    Check for an app update now (activates on next switch-on)
-  os-update     Apply OS security updates (switches to WiFi, then back)
+  os-update     Apply OS security updates (uses the client radio for internet)
   node-upgrade  Upgrade Node.js to a new major, e.g. bridge node-upgrade 24
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
-  sync-players  Update the EBU player list now (briefly drops the hotspot; run when idle)
-  sync-movements Update the movement list now (briefly drops the hotspot; run when idle)
-  wifi-scan     Scan for nearby WiFi networks (briefly drops the hotspot; run when idle)
+  sync-players  Update the EBU player list now (hotspot stays up)
+  sync-movements Update the movement list now (hotspot stays up)
+  wifi-scan     Scan for nearby WiFi networks (hotspot stays up)
   ship-logs     Export app logs since last run (local file for now)
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]

@@ -5,13 +5,13 @@
 # box is predictable and can't be broken by an unattended kernel/firmware change
 # while a club is relying on it (see the OS-update policy in structure.md).
 #
-# Run this by hand, occasionally, when the box has internet and no session is in
-# progress, to apply OS security updates:
+# Run this by hand, occasionally, to apply OS security updates:
 #
 #   sudo /home/bridgebox/bridge-box/bridge-box-os-update.sh
 #
 # It refuses to run without internet and reminds you to reboot if the kernel
-# changed.
+# changed. It no longer touches the hotspot (that's a separate radio), but the
+# apt upgrade + any reboot still disrupt play, so prefer running it when idle.
 
 set -euo pipefail
 
@@ -20,18 +20,14 @@ if [ "${EUID:-$(id -u 2>/dev/null || echo 1000)}" != "0" ]; then
     exit 1
 fi
 
-# Coordinate with the update service and bring the box online (via the
-# wifi.json client network if not already connected); always return to hotspot
-# mode afterwards.
+# Make sure the box is online (the dedicated client radio is normally already
+# connected from boot; this is a cheap re-check / best-effort bring-up via
+# wifi.json). The hotspot is on a separate radio and is unaffected — no lock, no
+# return-to-hotspot needed any more.
 # shellcheck source=bridge-box-wifi-lib.sh
 . /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
-if ! bb_acquire_lock; then
-    echo "Aborting — try again shortly." >&2
-    exit 1
-fi
-trap bb_return_to_hotspot EXIT
 if ! bb_wifi_online; then
-    echo "Could not get the box online (check wifi.json). Aborting." >&2
+    echo "Could not get the box online (check wifi.json / client adapter). Aborting." >&2
     exit 1
 fi
 

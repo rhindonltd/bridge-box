@@ -1,10 +1,9 @@
 #!/bin/bash
 # BridgeBox app-update DOWNLOAD job (radio-agnostic).
 #
-# This is Phase 1 of the update model, as a "job" run INSIDE the online window
-# opened by bridge-box-online-tasks.sh (via bb_run_online_window). It ASSUMES
-# the box is already online — it does NOT touch the radio, the lock, or traps
-# (the online-window orchestrator owns all of that).
+# This is Phase 1 of the update model, a "job" run by bridge-box-online-tasks.sh
+# (via bb_run_online_window, which just ensures the box is online then runs it).
+# It ASSUMES the box is already online — it does NOT touch the radio or any lock.
 #
 # It downloads any newer release, deploys .env, and runs `npm ci` WHILE ONLINE
 # (a new release may change deps; the offline Phase-2 build has no network), then

@@ -1,87 +1,66 @@
 #!/bin/bash
-# BridgeBox shared WiFi helpers.
+# BridgeBox shared WiFi helpers (dual-adapter model).
 #
-# Single source of truth for switching wlan0 between the hotspot and the client
-# network in wifi.json, returning to hotspot mode, and running an "online window"
-# (bb_run_online_window — the fork/join primitive). Sourced by:
-#   - bridge-box-online-tasks.sh (boot: opens ONE window via bb_run_online_window
-#                             around the download + player-sync + movement-sync jobs)
-#   - bridge-box-player-sync.service (manual `bridge sync-players`: one window)
-#   - bridge-box-movement-sync.service (manual `bridge sync-movements`: one window)
-#   - bridge-box-os-update.sh and bridge-box-node-upgrade.sh (maintenance: still
-#                             hand-wire bb_acquire_lock + bb_wifi_online +
-#                             bb_return_to_hotspot — accepted tech-debt, they
-#                             don't yet use bb_run_online_window)
+# This box has TWO WiFi radios that run CONCURRENTLY:
+#   AP_IFACE     — onboard Broadcom (brcmfmac): a PERMANENT hotspot (AP).
+#   CLIENT_IFACE — USB Ralink mt7601U: the client/internet link (wifi.json).
+#
+# Because the two radios are independent, reaching the internet NO LONGER means
+# taking the hotspot down. There is therefore no "online window", no shared
+# radio lock, and no return-to-hotspot dance — the hotspot is simply always up.
+# This library now just:
+#   - connects the CLIENT radio to the wifi.json network (bb_connect_wifi),
+#   - reports/ensures connectivity (bb_have_internet / bb_wifi_online).
+#
+# The former single-radio primitives (bb_acquire_lock, bb_return_to_hotspot,
+# bb_run_online_window) are kept as thin compatibility shims so existing callers
+# keep working, but they no longer touch the radio — see the bottom of the file.
 #
 # Usage:
 #   source /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh
-#   bb_wifi_online || { echo "no internet"; exit 0; }   # switch to client WiFi
-#   ... do network work ...
-#   bb_return_to_hotspot                                 # (also runs via trap)
+#   bb_wifi_online || { echo "no internet"; exit 0; }   # ensure client link up
+#   ... do network work (the hotspot is unaffected) ...
 #
-# Callers that only need a trap can do:
-#   trap bb_return_to_hotspot EXIT
-#
-# All functions are safe to call whether or not a switch happened.
+# All functions are safe to call whether or not the client link is already up.
 
 # --- Shared config (callers may pre-set these before sourcing) ---
-BB_IFACE="${BB_IFACE:-wlan0}"
+# Interface roles. Overridable via /home/bridgebox/interfaces.conf (same file
+# bridge-box-root.sh reads) so a box whose USB adapter enumerates differently
+# can adjust without editing scripts. BB_IFACE is the CLIENT interface (that's
+# the only radio this lib touches); the AP radio is owned by bridge-box-root.sh.
+# Precedence: an explicit BB_* env from the caller wins; else interfaces.conf's
+# AP_IFACE/CLIENT_IFACE; else the wlan0/wlan1 defaults. Source the file first so
+# its values are available, but don't let it clobber a caller's explicit BB_*.
+if [ -f "/home/bridgebox/interfaces.conf" ]; then
+    # shellcheck disable=SC1091
+    . /home/bridgebox/interfaces.conf
+fi
+BB_AP_IFACE="${BB_AP_IFACE:-${AP_IFACE:-wlan0}}"
+BB_CLIENT_IFACE="${BB_CLIENT_IFACE:-${CLIENT_IFACE:-wlan1}}"
+# BB_IFACE = the client radio this lib operates on. Callers may override it
+# (bridge-box-root.sh sets BB_IFACE="$CLIENT_IFACE" explicitly).
+BB_IFACE="${BB_IFACE:-$BB_CLIENT_IFACE}"
+
 BB_INSTALL_DIR="${BB_INSTALL_DIR:-/home/bridgebox}"
 BB_WIFI_CONFIG="${BB_WIFI_CONFIG:-$BB_INSTALL_DIR/wifi.json}"
-BB_HOTSPOT_CONNECTION="${BB_HOTSPOT_CONNECTION:-bridge-hotspot}"
 BB_NMCLI_TIMEOUT="${BB_NMCLI_TIMEOUT:-60}"
 BB_PING_TIMEOUT="${BB_PING_TIMEOUT:-15}"
-BB_LOCKFILE="${BB_LOCKFILE:-$BB_INSTALL_DIR/.update.lock}"
 # Fixed-path root helper for privileged nmcli ops (used when we're NOT root,
-# i.e. the boot update service running as bridgebox). Invoked via sudoers.
+# i.e. the boot online-tasks service running as bridgebox). Invoked via sudoers.
 BB_WIFI_CTL="/usr/local/bridgebox/bin/wifi-ctl.sh"
 
-# Are we running as root? os-update / node-upgrade run under sudo (root) and can
-# drive nmcli directly; the boot update service runs as bridgebox and must route
-# privileged operations through the sudo helper.
+# Are we running as root? os-update / node-upgrade and bridge-box-root.sh run as
+# root and can drive nmcli directly; the online-tasks service runs as bridgebox
+# and must route privileged operations through the sudo helper.
 _bb_is_root() { [ "${EUID:-$(id -u 2>/dev/null || echo 1000)}" = "0" ]; }
 
-# Acquire the shared network lock so this run can't race bridge-box-update.sh
-# (or another maintenance run) while any of them switch wlan0. Waits up to
-# BB_LOCK_WAIT seconds (default 120) rather than failing instantly, since a
-# manual maintenance run can reasonably wait for a boot-time update to finish.
-# Returns non-zero if the lock can't be acquired in time.
-bb_acquire_lock() {
-    local wait="${1:-${BB_LOCK_WAIT:-120}}"
-    exec 9>"$BB_LOCKFILE" || return 1
-    if ! flock -w "$wait" 9; then
-        echo "Another update/maintenance run holds the network lock (waited ${wait}s)."
-        return 1
-    fi
-}
-
-# Return the device to hotspot mode and re-assert NAT. Idempotent.
-# Root path drives nmcli directly; non-root routes through the sudo helper.
-bb_return_to_hotspot() {
-    echo "Returning to hotspot mode..."
-    if _bb_is_root; then
-        nmcli device disconnect "$BB_IFACE" 2>/dev/null || true
-        nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect yes 2>/dev/null || true
-        if ! nmcli connection up "$BB_HOTSPOT_CONNECTION" 2>/dev/null; then
-            echo "WARNING: failed to bring hotspot '$BB_HOTSPOT_CONNECTION' up."
-        fi
-    else
-        if ! sudo -n "$BB_WIFI_CTL" hotspot; then
-            echo "WARNING: wifi-ctl hotspot failed (could not restore hotspot)."
-        fi
-    fi
-    # Re-assert port redirects; switching wlan0 can drop NM's rebuilt NAT rules.
-    if ! sudo -n /usr/local/bridgebox/bin/apply-nat.sh 2>/dev/null; then
-        echo "WARNING: could not re-apply NAT redirects (guests may not reach the app on 80/443)."
-    fi
-    echo "Hotspot restored."
-}
-
-# Connect wlan0 to the client network in wifi.json, trying the configured
-# visibility first then the other. Returns non-zero if it can't connect.
+# Connect the CLIENT radio (BB_IFACE) to the network in wifi.json. Does NOT
+# touch the hotspot (separate radio). Idempotent: if the client is already on
+# the right network nmcli just reuses the profile. Returns non-zero if it can't
+# connect. Safe to call at boot and from maintenance scripts.
 bb_connect_wifi() {
     if [ ! -f "$BB_WIFI_CONFIG" ]; then
-        echo "No wifi.json — cannot switch to client WiFi."
+        echo "No wifi.json — cannot bring up the client link."
         return 1
     fi
     chmod 600 "$BB_WIFI_CONFIG" 2>/dev/null || true
@@ -90,18 +69,16 @@ bb_connect_wifi() {
         return 1
     fi
 
-    # Non-root (the boot update service, run as bridgebox) can't drive NM
-    # directly — delegate the privileged connect to the root sudo helper, which
-    # reads wifi.json itself (no secrets on the command line).
+    # Non-root (the online-tasks service, run as bridgebox) can't drive NM
+    # directly — delegate to the root sudo helper, which reads wifi.json itself
+    # (no secrets on the command line).
     if ! _bb_is_root; then
-        # sudo strips the environment, so the helper uses its own defaults for
-        # iface/hotspot (which match ours). It reads wifi.json itself.
-        echo "Connecting via privileged helper (running as $(id -un))..."
+        echo "Connecting client radio via privileged helper (running as $(id -un))..."
         sudo -n "$BB_WIFI_CTL" connect
         return $?
     fi
 
-    # Root path (os-update / node-upgrade under sudo): drive nmcli directly.
+    # Root path: drive nmcli directly on the client interface.
     local ssid password hidden
     ssid=$(jq -r '.ssid // empty' "$BB_WIFI_CONFIG")
     password=$(jq -r '.password // empty' "$BB_WIFI_CONFIG")
@@ -112,26 +89,16 @@ bb_connect_wifi() {
         return 1
     fi
 
-    # Free wlan0 from hotspot/AP mode first. A single WiFi radio can't run as an
-    # access point AND scan for/join a client network at the same time. Disable
-    # the hotspot's (high-priority) autoconnect so NM can't re-raise it and steal
-    # the radio; bb_return_to_hotspot re-enables it.
-    echo "Taking hotspot down so wlan0 can join a client network..."
-    timeout "$BB_NMCLI_TIMEOUT" nmcli connection modify "$BB_HOTSPOT_CONNECTION" connection.autoconnect no 2>/dev/null || true
-    timeout "$BB_NMCLI_TIMEOUT" nmcli connection down "$BB_HOTSPOT_CONNECTION" 2>/dev/null || true
-    sleep 2
-    timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$BB_IFACE" 2>/dev/null || true
-    sleep 2
-
-    # Non-destructive: connect first (reuses/updates any saved profile); only
-    # delete + retry if that fails, so a transient failure never leaves the box
-    # with no profile AND not connected.
+    # No hotspot juggling: the client radio (BB_IFACE) is dedicated, so we just
+    # connect it. Non-destructive: connect first (nmcli reuses/updates any saved
+    # profile); only delete + retry if that fails, so a transient failure never
+    # leaves the box with no profile AND not connected.
     _bb_connect() {
         local h="$1"
         if [ "$h" = "yes" ]; then
-            timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password" hidden yes
+            timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password" ifname "$BB_IFACE" hidden yes
         else
-            timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password"
+            timeout "$BB_NMCLI_TIMEOUT" nmcli device wifi connect "$ssid" password "$password" ifname "$BB_IFACE"
         fi
     }
     _bb_try() {
@@ -142,7 +109,7 @@ bb_connect_wifi() {
         _bb_connect "$h"
     }
 
-    echo "Connecting to WiFi: $ssid"
+    echo "Connecting client radio $BB_IFACE to WiFi: $ssid"
     if [ "$hidden" = "yes" ]; then
         _bb_try "yes" || _bb_try "no"
     else
@@ -155,87 +122,63 @@ bb_have_internet() {
     timeout "$BB_PING_TIMEOUT" ping -c 1 8.8.8.8 >/dev/null 2>&1
 }
 
-# Bring the box online for maintenance: use existing internet if present,
-# otherwise switch to the client WiFi from wifi.json. Returns non-zero if it
-# couldn't get online. On success the caller should ensure bb_return_to_hotspot
-# runs afterwards (set a trap).
+# Ensure the box is online: use existing internet if present, otherwise bring
+# the client link up from wifi.json. Returns non-zero if it couldn't get online.
+# The hotspot is unaffected throughout (separate radio) — callers no longer need
+# a return-to-hotspot trap.
 bb_wifi_online() {
     if bb_have_internet; then
         echo "Already online."
         return 0
     fi
-    echo "No internet — switching to client WiFi from wifi.json..."
+    echo "No internet — bringing the client link up from wifi.json..."
     if ! bb_connect_wifi; then
-        echo "Could not connect to client WiFi."
+        echo "Could not connect the client link."
         return 1
     fi
     if bb_have_internet; then
-        echo "Online via client WiFi."
+        echo "Online via client link."
         return 0
     fi
-    echo "Connected to WiFi but still no internet."
+    echo "Client link connected but still no internet."
     return 1
 }
 
 # ---------------------------------------------------------------------------
-# bb_run_online_window <job-cmd> [<job-cmd> ...]
+# Compatibility shims (dual-radio: these used to manage the single radio).
 #
-# The single "online window" primitive (fork/join): open the window ONCE, run
-# each job sequentially inside it, then close it ONCE. This is the only place
-# the boot path touches the radio, so N network jobs cause exactly one hotspot
-# down/up cycle.
-#
-#   1. Acquire the shared lock (skip everything if another run holds it).
-#   2. Arm an EXIT trap that ALWAYS restores the hotspot + NAT and releases the
-#      lock (once-guarded), no matter how we leave.
-#   3. Bring the box online (bb_wifi_online). If that fails, run NO jobs and
-#      return — the trap still restores the hotspot.
-#   4. Run each job (a shell command string) in sequence. A job's failure is
-#      logged and does NOT stop later jobs (each job is expected to be
-#      self-contained and non-fatal).
-#
-# Each job assumes it is ALREADY online and must NOT touch the radio/lock/trap.
-# The whole window is bounded by BB_WINDOW_DEADLINE seconds (default 1200); if
-# exceeded, the current job is killed and we close the window.
-#
-# Returns 0 if the window opened (jobs attempted), non-zero if it couldn't open
-# (lock held, or could not get online).
+# With two radios the hotspot is never taken down, so there is nothing to lock,
+# no window to open/close, and nothing to restore. These are kept as no-ops (or
+# trivial "ensure online") so existing callers — os-update, node-upgrade,
+# online-tasks, the *-sync services — keep working unchanged.
 # ---------------------------------------------------------------------------
+
+# Was: acquire the single-radio lock. Now a no-op success (nothing to serialize
+# — network jobs can run concurrently with the hotspot).
+bb_acquire_lock() { return 0; }
+
+# Was: tear the client link down and restore the hotspot. Now a no-op: the
+# hotspot never went down. We intentionally LEAVE the client link up so the box
+# stays online for the next job. Kept so `trap bb_return_to_hotspot EXIT` in
+# older callers is harmless.
+bb_return_to_hotspot() { return 0; }
+
+# Was: open ONE online window (lock -> hotspot down -> client -> ... -> hotspot).
+# Now: just ensure we're online, then run each job sequentially. No radio
+# juggling, no lock, no trap. A job's failure is logged and does not stop later
+# jobs. Returns 0 if jobs were attempted, non-zero if the box couldn't get
+# online (in which case the jobs — which need internet — are skipped).
 bb_run_online_window() {
-    local deadline="${BB_WINDOW_DEADLINE:-1200}"
-
-    if ! bb_acquire_lock; then
-        echo "online-window: could not acquire lock — skipping."
-        return 1
-    fi
-
-    _BB_WINDOW_CLOSED=0
-    _bb_close_window() {
-        [ "${_BB_WINDOW_CLOSED:-0}" = "1" ] && return 0
-        _BB_WINDOW_CLOSED=1
-        bb_return_to_hotspot
-        flock -u 9 2>/dev/null || true
-        exec 9>&- 2>/dev/null || true
-    }
-    trap _bb_close_window EXIT
-
     if ! bb_wifi_online; then
-        echo "online-window: could not get online — running no jobs."
-        _bb_close_window
-        trap - EXIT
+        echo "online-tasks: could not get online — skipping network jobs."
         return 1
     fi
-
     local job
     for job in "$@"; do
-        echo "online-window: running job: $job"
-        # Bound each job; failures are non-fatal so later jobs still run.
-        if ! timeout "$deadline" bash -c "$job"; then
-            echo "online-window: job failed or timed out (continuing): $job"
+        echo "online-tasks: running job: $job"
+        if ! bash -c "$job"; then
+            echo "online-tasks: job failed (continuing): $job"
         fi
     done
-
-    _bb_close_window
-    trap - EXIT
     return 0
 }

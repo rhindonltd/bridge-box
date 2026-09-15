@@ -42,11 +42,14 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 echo "=== BridgeBox background build $(date -Is) ==="
 
-# Serialize with the update run (shares .update.lock). Wait a little, since the
-# update service may still be finishing when we start.
+# Ordering (systemd: build After online-tasks) already keeps this from racing
+# the boot download job, and with dual radios there's no shared radio lock to
+# take. We still take .update.lock defensively so a manual `bridge update-now`
+# (which runs online-tasks then build) can't overlap a boot build; non-blocking
+# with a short wait, and we just retry next boot if we can't get it.
 exec 9>"$LOCKFILE"
 if ! flock -w 60 9; then
-    echo "Could not get lock (update in progress) — will retry next boot."
+    echo "Could not get lock (another build/update in progress) — will retry next boot."
     exit 0
 fi
 

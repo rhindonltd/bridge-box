@@ -1,7 +1,7 @@
 # Tech Stack
 
 ## Platform
-- **Target hardware**: Raspberry Pi running Debian/Raspberry Pi OS (`apt`, `systemd`, `nmcli`/NetworkManager).
+- **Target hardware**: Raspberry Pi running Debian/Raspberry Pi OS (`apt`, `systemd`, `nmcli`/NetworkManager), with **two WiFi radios**: the onboard Broadcom (`brcmfmac`, `AP_IFACE`=`wlan0`) as a permanent hotspot and a USB Ralink **mt7601U** (`CLIENT_IFACE`=`wlan1`) as the internet link. They run concurrently, so updates never drop the hotspot. Interface names are overridable in box-local `/home/bridgebox/interfaces.conf`.
 - **Runtime**: Node.js LTS from the NodeSource apt repo, pinned to a major line via `NODE_MAJOR` in `install.sh` (default 24). `apt upgrade` stays within the major; major upgrades are a manual step (`bridge-box-node-upgrade.sh`).
 - **Process supervision**: native **systemd** service `bridge-box-app.service` (`Restart=always`) — no PM2.
 - **App server**: The scorer app (separate `bridge-box-scorer` repo) is a Next.js + Socket.IO app; production entrypoint is `node dist/server.js` (falls back to `tsx server.ts`), listening on port `3000`.
@@ -12,7 +12,7 @@
 - **JSON** — config (`wifi.json`, etc.).
 
 ## System tooling relied on
-- `nmcli` (NetworkManager) for the WiFi hotspot and client connections.
+- `nmcli` (NetworkManager) for the WiFi hotspot (AP radio) and client connections (client radio) — the two radios operate independently.
 - `iptables` / `iptables-persistent` / `netfilter-persistent` for NAT and port redirects.
 - `avahi-daemon` for mDNS (`bridge.local`).
 - `jq` for parsing `wifi.json`.

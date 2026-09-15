@@ -1,25 +1,26 @@
 #!/bin/bash
 # BridgeBox boot online-tasks orchestrator (bridgebox user).
 #
-# Fork/join model: at boot, BEFORE the app service starts (so no session is
-# active), do the one local step that needs no network, then open the online
-# window ONCE and run all network jobs inside it, then close it ONCE. This means
-# a single hotspot down/up cycle per boot regardless of how many network jobs
-# there are — and the app service is entirely independent of all of this.
+# Dual-adapter model: the hotspot lives on its own radio and is ALWAYS up, and a
+# separate client radio (wlan1) carries the internet link. So there's no radio
+# to juggle here — we just do the local activate step, make sure the client link
+# is online, and run the network jobs sequentially. (The client link is normally
+# already up from boot, in bridge-box-root.sh; bb_wifi_online is a cheap re-check
+# / best-effort bring-up.)
 #
 # Steps:
 #   Phase 3 (LOCAL, no network): if a fully-built release is pending, activate
-#           it (swap `current`) and restart the app service. Runs first, outside
-#           the window, because it needs no connectivity.
-#   Online window (via bb_run_online_window): run, sequentially —
+#           it (swap `current`) and restart the app service. Runs first because
+#           it needs no connectivity.
+#   Network jobs (via bb_run_online_window — now just "ensure online + run"):
 #           1. the update DOWNLOAD job (download newer release + npm ci)
 #           2. the player-sync job (refresh EBU players.db)
 #           3. the movement-sync job (refresh the movement list)
-#   The window opens once (hotspot down -> client WiFi), runs both jobs, and
-#   always closes once (back to hotspot), guaranteed by the lib's trap.
 #
 # Nothing here starts or blocks the app; a total failure just leaves the box on
-# the current release, serving normally.
+# the current release, serving normally. Because the hotspot is never disturbed,
+# this is harmless even if it somehow overlapped a session — but it still runs at
+# boot, before the app, as the natural place to do it.
 
 set -uo pipefail
 
@@ -52,7 +53,7 @@ echo "=== BridgeBox online tasks $(date -Is) ==="
 
 # ---------------------------------------------------------------------------
 # Phase 3 — LOCAL: activate a pending, fully-built release, then restart app.
-# No connectivity needed, so this runs OUTSIDE the online window, first.
+# No connectivity needed, so this runs first, before any network jobs.
 # ---------------------------------------------------------------------------
 if [ -L "$PENDING_LINK" ]; then
     PENDING_TARGET=$(readlink -f "$PENDING_LINK" 2>/dev/null || echo "")
@@ -81,7 +82,8 @@ if [ -L "$PENDING_LINK" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Online window — run the network jobs inside ONE hotspot down/up cycle.
+# Network jobs — ensure the client link is online, then run them sequentially.
+# The hotspot (separate radio) is never disturbed.
 # ---------------------------------------------------------------------------
 if [ ! -f "$WIFI_CONFIG" ]; then
     echo "online-tasks: no wifi.json — offline box, skipping network jobs."
@@ -97,7 +99,8 @@ fi
 . "$WIFI_LIB"
 
 # Jobs are radio-agnostic scripts that assume they're already online. They run
-# sequentially inside the single window; each is non-fatal.
+# sequentially (bb_run_online_window now just ensures the client link is up,
+# then runs each); each is non-fatal. No hotspot cycle, no lock.
 bb_run_online_window \
     "bash $BOX_DIR/bridge-box-update.sh" \
     "bash $BOX_DIR/bridge-box-player-sync.sh" \
