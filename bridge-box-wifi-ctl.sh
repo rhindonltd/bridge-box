@@ -102,11 +102,21 @@ ensure_hotspot_up() {
 do_scan() {
     # Scan on the client radio. The hotspot (other radio) is untouched, so this
     # is safe to run any time, even mid-session.
-    timeout "$NMCLI_TIMEOUT" nmcli device wifi rescan ifname "$IFACE" 2>/dev/null || true
+    #
+    # IMPORTANT: do NOT use `nmcli device wifi list --rescan yes`. That forces a
+    # fresh rescan and BLOCKS until it completes; because NetworkManager rate-
+    # limits rescans (~one per 10-15s per device), a `list --rescan yes` issued
+    # inside that window can block indefinitely and gets killed by `timeout`
+    # (exit 124) instead of returning the results it already has. Instead: do one
+    # best-effort standalone rescan (non-fatal, rate-limit-safe), give it a
+    # moment, then LIST with --rescan no so it returns the cached results
+    # immediately. `-w` also bounds nmcli itself so it can never hang past a few
+    # seconds regardless of NM/driver state.
+    timeout 12 nmcli -w 10 device wifi rescan ifname "$IFACE" 2>/dev/null || true
     sleep 2
     # Emit the RAW `nmcli device wifi list` output verbatim so the app's existing
     # parser needs no change.
-    timeout "$NMCLI_TIMEOUT" nmcli device wifi list ifname "$IFACE" --rescan yes
+    timeout "$NMCLI_TIMEOUT" nmcli -w 10 device wifi list ifname "$IFACE" --rescan no
 }
 
 do_test_connect() {
