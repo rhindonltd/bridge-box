@@ -43,9 +43,33 @@ case "$cmd" in
     # and is safe to run any time. The online-tasks orchestrator runs the
     # download job (+ syncs); the build then runs to completion. Both blocking
     # (--wait) so they don't overlap. The new version activates next boot.
+    #
+    # These run as systemd oneshots, so their real output goes to the journal /
+    # logs, not this console. Stream the download-job log while they run so the
+    # operator can actually SEE the check (resolve remote, compare, download or
+    # "already downloaded") instead of a silent "Done".
+    UPDATE_LOG="$INSTALL_DIR/logs/update.log"
+    ONLINE_LOG="$INSTALL_DIR/logs/online-tasks.log"
+    # Mark where this run starts so the follower only shows THIS run's lines.
+    for f in "$UPDATE_LOG" "$ONLINE_LOG"; do
+        [ -f "$f" ] || { sudo -u bridgebox mkdir -p "$(dirname "$f")" 2>/dev/null; sudo -u bridgebox touch "$f" 2>/dev/null; }
+    done
+    START_LINES_UPDATE=$(wc -l < "$UPDATE_LOG" 2>/dev/null || echo 0)
+    START_LINES_ONLINE=$(wc -l < "$ONLINE_LOG" 2>/dev/null || echo 0)
+
     sudo systemctl start --wait bridge-box-online-tasks
+
+    echo
+    echo "-- online-tasks log (this run) --"
+    tail -n "+$((START_LINES_ONLINE + 1))" "$ONLINE_LOG" 2>/dev/null || true
+    echo "-- download-job log (this run) --"
+    tail -n "+$((START_LINES_UPDATE + 1))" "$UPDATE_LOG" 2>/dev/null || true
+    echo
+
     sudo systemctl start --wait bridge-box-build
+
     echo "Done. The new version (if any) activates on next switch-on."
+    echo "Full logs: $UPDATE_LOG , $INSTALL_DIR/logs/build.log"
     ;;
 
   os-update)

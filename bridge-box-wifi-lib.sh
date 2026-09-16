@@ -118,8 +118,25 @@ bb_connect_wifi() {
 }
 
 # True if the box currently has internet.
+#
+# Don't rely on ICMP alone: many club/guest networks block outbound pings to
+# 8.8.8.8 while HTTPS (which is all the update/sync jobs actually need) works
+# fine. That false "offline" reading silently skips the whole update flow. So
+# try, in order: a cheap ping (fast when allowed), then an HTTPS reachability
+# probe to a well-known host, then the git remote. Any one succeeding = online.
 bb_have_internet() {
-    timeout "$BB_PING_TIMEOUT" ping -c 1 8.8.8.8 >/dev/null 2>&1
+    # 1. ICMP — fast path when the network allows it.
+    timeout "$BB_PING_TIMEOUT" ping -c 1 8.8.8.8 >/dev/null 2>&1 && return 0
+    # 2. HTTPS reachability (curl if present) — the real capability we need.
+    if command -v curl >/dev/null 2>&1; then
+        timeout "$BB_PING_TIMEOUT" curl -fsS -o /dev/null \
+            --connect-timeout "$BB_PING_TIMEOUT" \
+            https://github.com >/dev/null 2>&1 && return 0
+    fi
+    # 3. Last resort: can we reach the app's git remote host at all?
+    timeout "$BB_PING_TIMEOUT" bash -c \
+        'exec 3<>/dev/tcp/github.com/443' 2>/dev/null && return 0
+    return 1
 }
 
 # Ensure the box is online: use existing internet if present, otherwise bring
