@@ -1,0 +1,17 @@
+[Unit]
+Description=BridgeBox watch wifi.json and re-apply the client link on change
+# When the app (or an admin) writes /home/bridgebox/wifi.json, apply it to the
+# client radio immediately — no reboot needed. This is the file-driven half of
+# the "commit a network by writing wifi.json" model: the app just writes the
+# file; systemd notices and runs bridge-box-wifi-apply.service.
+
+[Path]
+# PathChanged fires on close-after-write (the whole write is done), which is what
+# we want — including the atomic write-temp-then-rename pattern the app should
+# use. PathModified would fire on every intermediate write; PathChanged is the
+# right granularity for "the file was updated".
+PathChanged=/home/bridgebox/wifi.json
+Unit=bridge-box-wifi-apply.service
+
+[Install]
+WantedBy=multi-user.target

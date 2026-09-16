@@ -1,0 +1,18 @@
+[Unit]
+Description=BridgeBox apply wifi.json to the client radio (triggered on file change)
+# Applies the CLIENT link only. The hotspot is a separate radio and is never
+# touched here, so this is safe to run any time — including mid-session.
+After=bridge-box-root.service
+# Best-effort: a failure here must never cascade. The box keeps serving over the
+# hotspot regardless, and boot already applies wifi.json via bridge-box-root.sh.
+
+[Service]
+Type=oneshot
+User=bridgebox
+Environment=HOME=/home/bridgebox
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Reuse the existing privilege bridge: the root helper reads wifi.json itself and
+# drives nmcli on the client radio (non-destructive connect). No new privileges.
+ExecStart=/usr/bin/sudo -n /usr/local/bridgebox/bin/wifi-ctl.sh connect
+StandardOutput=journal
+StandardError=journal

@@ -173,6 +173,11 @@ sudo cp "$BOX_DIR/bridge-box-player-sync.service" /etc/systemd/system/
 # movement-sync.service mirrors player-sync: manual `bridge sync-movements`
 # path. No timer — boot online tasks or manual only.
 sudo cp "$BOX_DIR/bridge-box-movement-sync.service" /etc/systemd/system/
+# wifi-apply: a .path unit watches wifi.json and runs the .service (which calls
+# the wifi-ctl connect helper) whenever the file changes, so a network the app
+# writes takes effect immediately — no reboot. The .path is enabled below.
+sudo cp "$BOX_DIR/bridge-box-wifi-apply.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-wifi-apply.path" /etc/systemd/system/
 
 # --- 8. Enable and start services ---
 # Guard: never enable the app services against a missing or half-built release.
@@ -192,9 +197,12 @@ sudo systemctl daemon-reload
 # player-sync.service has no timer (manual/boot only).
 sudo systemctl enable bridge-box-root bridge-box-online-tasks bridge-box-build bridge-box-app
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
+# Watch wifi.json and re-apply the client link on change (no reboot needed).
+sudo systemctl enable bridge-box-wifi-apply.path
 sudo systemctl start bridge-box-root
 sudo systemctl start bridge-box-online-tasks
 sudo systemctl start bridge-box-app          # native systemd app service
+sudo systemctl start bridge-box-wifi-apply.path
 # bridge-box-build runs after online-tasks; enabling is enough (it fires at boot).
 sudo systemctl start bridge-box-healthcheck.timer
 sudo systemctl start bridge-box-backup.timer
