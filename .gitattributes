@@ -5,6 +5,7 @@
 *.sh      text eol=lf
 *.service text eol=lf
 *.timer   text eol=lf
+*.path    text eol=lf
 *.cjs     text eol=lf
 *.js      text eol=lf
 *.json    text eol=lf
