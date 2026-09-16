@@ -26,6 +26,12 @@ mkdir -p "$LOG_DIR"
 RELEASE_REF="main"
 [ -f "$INSTALL_DIR/release.conf" ] && . "$INSTALL_DIR/release.conf"
 
+# Shared WiFi lib gives us a robust bb_have_internet (HTTPS-aware, not ICMP-only)
+# so a network that blocks pings doesn't make us falsely skip the download.
+WIFI_LIB="$INSTALL_DIR/bridge-box/bridge-box-wifi-lib.sh"
+# shellcheck source=bridge-box-wifi-lib.sh
+[ -f "$WIFI_LIB" ] && . "$WIFI_LIB"
+
 CLONE_TIMEOUT=120
 NPM_INSTALL_TIMEOUT=600   # `npm ci` on a Pi can take several minutes
 
@@ -42,8 +48,15 @@ exec >> "$LOGFILE" 2>&1
 
 echo "=== BridgeBox update download job $(date -Is) ==="
 
-# Assumes online (caller/orchestrator ensured it). Bail cheaply if not.
-if ! timeout 15 ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+# Assumes online (caller/orchestrator ensured it). Bail cheaply if not. Uses the
+# lib's HTTPS-aware check when available (ICMP-only pings are blocked on many
+# networks and would falsely skip the download); falls back to a raw ping.
+if command -v bb_have_internet >/dev/null 2>&1; then
+    if ! bb_have_internet; then
+        echo "update: not online — skipping download."
+        exit 0
+    fi
+elif ! timeout 15 ping -c 1 8.8.8.8 >/dev/null 2>&1; then
     echo "update: not online — skipping download."
     exit 0
 fi
