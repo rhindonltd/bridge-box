@@ -103,20 +103,24 @@ do_scan() {
     # Scan on the client radio. The hotspot (other radio) is untouched, so this
     # is safe to run any time, even mid-session.
     #
-    # IMPORTANT: do NOT use `nmcli device wifi list --rescan yes`. That forces a
-    # fresh rescan and BLOCKS until it completes; because NetworkManager rate-
-    # limits rescans (~one per 10-15s per device), a `list --rescan yes` issued
-    # inside that window can block indefinitely and gets killed by `timeout`
-    # (exit 124) instead of returning the results it already has. Instead: do one
-    # best-effort standalone rescan (non-fatal, rate-limit-safe), give it a
-    # moment, then LIST with --rescan no so it returns the cached results
-    # immediately. `-w` also bounds nmcli itself so it can never hang past a few
-    # seconds regardless of NM/driver state.
+    # Output format: TERSE (`nmcli -t -f SSID,SECURITY,SIGNAL`). This is what the
+    # app's parser expects — colon-separated fields, no header/padding/colour.
+    # Terse mode is also non-interactive (no pager / no tty behaviour), which
+    # avoids the hang we hit with the default tabular output when stdout is a
+    # terminal (nmcli would go interactive and get killed by `timeout` -> 124).
+    # NOTE for the parser: in -t mode nmcli backslash-escapes any literal colon
+    # inside a field (e.g. an SSID with a ':'), so split on UNescaped colons.
+    #
+    # Also: do NOT use `--rescan yes` on the list. It forces a fresh rescan and
+    # BLOCKS until it completes; combined with the standalone rescan below (and
+    # NM's ~10-15s rescan rate-limit) that could stall and hit the timeout. We do
+    # one best-effort standalone rescan (non-fatal, rate-limit-safe), pause, then
+    # LIST with --rescan no so it returns the cached results immediately. `-w`
+    # bounds nmcli itself so it can never hang past a few seconds.
     timeout 12 nmcli -w 10 device wifi rescan ifname "$IFACE" 2>/dev/null || true
     sleep 2
-    # Emit the RAW `nmcli device wifi list` output verbatim so the app's existing
-    # parser needs no change.
-    timeout "$NMCLI_TIMEOUT" nmcli -w 10 device wifi list ifname "$IFACE" --rescan no
+    timeout "$NMCLI_TIMEOUT" nmcli -t -f SSID,SECURITY,SIGNAL -w 10 \
+        device wifi list ifname "$IFACE" --rescan no
 }
 
 do_test_connect() {
