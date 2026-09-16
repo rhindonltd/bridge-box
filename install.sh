@@ -90,20 +90,19 @@ sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
 SUDOERS_FILE="/etc/sudoers.d/bridgebox"
-# NOTE on arg matching: a bare command path allows ANY args; a path + literal
-# args restricts to exactly those. `scan`/`hotspot`/`connect`/`test-cleanup`
-# are pinned exactly. `test-connect` takes an SSID/password, so it's allowed
-# with a trailing "" (sudo syntax for "any args may follow") — still restricted
-# to the test-connect verb of this one script.
+# NOTE on arg matching: in sudoers, a command path with NO args allows ANY args;
+# a path + literal args restricts to EXACTLY those (and a trailing "" means "the
+# next arg must be empty", NOT "any args may follow" — a common mistake). The
+# no-arg verbs (`connect`/`hotspot`/`scan`/`test-cleanup`) are pinned exactly.
+# `test-connect` takes an SSID + password, so it can't be pinned to fixed args;
+# we allow the wrapper with any args and rely on the wrapper's own verb
+# validation (its `case`/usage guard rejects anything but the known verbs) as
+# the security boundary. The wrapper still can't be pointed at another binary.
 sudo bash -c "cat > $SUDOERS_FILE" <<EOF
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-app.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh connect
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh hotspot
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh scan
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh test-cleanup
-bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh test-connect ""
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh
 EOF
 
 sudo chmod 440 $SUDOERS_FILE
