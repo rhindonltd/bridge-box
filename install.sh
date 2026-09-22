@@ -41,6 +41,21 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
 # major (e.g. 24.x.y). Crossing to a new major is a deliberate step — see
 # bridge-box-node-upgrade.sh. Override the default by exporting NODE_MAJOR.
+# Locale for the scorer app. Controls NEXT_PUBLIC_BRIDGE_LOCALE, which the app
+# uses for locale-specific logic. Baked into the build (a NEXT_PUBLIC_ var), so
+# it's persisted to a box-local locale.conf that bridge-box-deploy-env.sh reads
+# on every build (initial + Phase 2 rebuilds). Override the default by exporting
+# BRIDGE_LOCALE before running install (e.g. BRIDGE_LOCALE=en-US). Valid: en-GB
+# (default), en-US.
+BRIDGE_LOCALE="${BRIDGE_LOCALE:-en-GB}"
+case "$BRIDGE_LOCALE" in
+  en-GB|en-US) ;;
+  *)
+    echo "ERROR: invalid BRIDGE_LOCALE '$BRIDGE_LOCALE' (valid: en-GB, en-US)"
+    exit 1
+    ;;
+esac
+
 NODE_MAJOR="${NODE_MAJOR:-24}"
 echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
@@ -137,6 +152,16 @@ sed -i 's/\r$//' "$BOX_DIR"/*.sh 2>/dev/null || true
 # `bridge os-update`, `bridge help`.
 sudo ln -sfn "$BOX_DIR/bridge.sh" /usr/local/bin/bridge
 sudo chmod +x "$BOX_DIR/bridge.sh"
+
+# Persist the locale box-local so every build (this initial one AND future
+# Phase 2 rebuilds) picks up the same value. bridge-box-deploy-env.sh reads this
+# and writes NEXT_PUBLIC_BRIDGE_LOCALE into each release's .env before building.
+echo "Setting locale: BRIDGE_LOCALE=$BRIDGE_LOCALE"
+cat > "$INSTALL_DIR/locale.conf" <<EOF
+# BridgeBox locale (NEXT_PUBLIC_BRIDGE_LOCALE). Valid: en-GB, en-US.
+# Change this and rebuild (bridge update-now / next boot) to take effect.
+BRIDGE_LOCALE=$BRIDGE_LOCALE
+EOF
 
 # Supply the app's .env (gitignored in the app repo) + create data dirs before
 # building the initial release. The prebuild migration and next build need it.

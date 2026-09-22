@@ -5,7 +5,7 @@ self-contained appliance that runs the bridge scoring app and serves it over its
 
 You do not need to be a developer to follow this. Where a step needs judgement or can go wrong,
 there's a note explaining what to expect.
-
+w
 ---
 
 ## What you're building
@@ -392,6 +392,10 @@ sudo apt-get -f install
 - Optional version pin: `/home/bridgebox/release.conf` (`RELEASE_REF="..."`)
 - Optional captive-portal toggle: `/home/bridgebox/captive.conf` (`CAPTIVE_PORTAL="no"`)
 - Optional interface-name override: `/home/bridgebox/interfaces.conf` (`AP_IFACE=`, `CLIENT_IFACE=`)
+- Locale (set at install): `/home/bridgebox/locale.conf` (`BRIDGE_LOCALE=en-GB` or `en-US`, default
+  `en-GB`). Controls `NEXT_PUBLIC_BRIDGE_LOCALE`, which is baked into the app at build time. Set it
+  at install with `BRIDGE_LOCALE=en-US curl ... | bash`; to change it later, edit this file and
+  rebuild (`bridge update-now` or next boot).
 - Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
   `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
