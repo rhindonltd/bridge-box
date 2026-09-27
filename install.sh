@@ -34,8 +34,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get update
 echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
 echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
 
+# awscli: used by the optional cloud backup/restore feature (off by default).
+# It's a small apt package and harmless on a box that never enables cloud
+# backup, so we install it unconditionally to keep provisioning simple.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git curl avahi-daemon iptables iptables-persistent jq sqlite3
+  git curl avahi-daemon iptables iptables-persistent jq sqlite3 awscli
 
 # Install Node.js from the NodeSource apt repo, pinned to a major line.
 # NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
@@ -55,6 +58,58 @@ case "$BRIDGE_LOCALE" in
     exit 1
     ;;
 esac
+
+# --- BOX_ID (mandatory) + optional cloud backup config ---
+# BOX_ID is the stable per-club/box identifier that keys this box's off-box
+# backups in S3 (s3://<bucket>/<BOX_ID>/). It is REQUIRED at provisioning so a
+# replacement box can be given the SAME BOX_ID and inherit the old box's data.
+# The normal install runs via `curl ... | bash` (no TTY), so BOX_ID must be
+# passed as an env var; we only fall back to an interactive prompt when a TTY is
+# actually attached. Fail fast with guidance otherwise.
+if [ -z "${BOX_ID:-}" ]; then
+  if [ -t 0 ]; then
+    read -r -p "Enter this box's BOX_ID (stable club/box identifier, e.g. club123): " BOX_ID
+  else
+    echo "ERROR: BOX_ID is required but was not provided."
+    echo "Re-run the installer with BOX_ID set, e.g.:"
+    echo "  curl -sSL <install-url> | BOX_ID=club123 bash"
+    exit 1
+  fi
+fi
+if [ -z "${BOX_ID:-}" ]; then
+  echo "ERROR: BOX_ID must not be empty."
+  exit 1
+fi
+# Keep BOX_ID to a safe charset — it becomes an S3 key prefix.
+case "$BOX_ID" in
+  *[!A-Za-z0-9._-]*)
+    echo "ERROR: BOX_ID '$BOX_ID' contains invalid characters (allowed: letters, digits, . _ -)."
+    exit 1
+    ;;
+esac
+echo "Using BOX_ID=$BOX_ID"
+
+# Optional cloud backup wiring. The feature is OFF unless a bucket + endpoint +
+# token are supplied (see bridge-box-cloud-lib.sh); we always record BOX_ID so
+# the box knows who it is, and fill in the rest if provided at install time.
+# These are read from the environment (all optional except BOX_ID above):
+#   CLOUD_BUCKET, CLOUD_REGION, CLOUD_ENDPOINT, CLOUD_TOKEN, SNAPSHOT_KEEP
+CLOUD_CONF="$INSTALL_DIR/cloud-backup.conf"
+echo "Writing $CLOUD_CONF (BOX_ID recorded; cloud backup is OFF until bucket+endpoint+token are set)..."
+umask 077
+cat > "$CLOUD_CONF" <<EOF
+# BridgeBox cloud backup config (box-local, chmod 600 — NOT in git).
+# Cloud backup/restore stays OFF unless BOX_ID + CLOUD_BUCKET + CLOUD_ENDPOINT +
+# CLOUD_TOKEN are all set. See bridge-box-cloud-lib.sh for the full contract.
+BOX_ID="$BOX_ID"
+CLOUD_BUCKET="${CLOUD_BUCKET:-}"
+CLOUD_REGION="${CLOUD_REGION:-eu-west-2}"
+CLOUD_ENDPOINT="${CLOUD_ENDPOINT:-}"
+CLOUD_TOKEN="${CLOUD_TOKEN:-}"
+SNAPSHOT_KEEP="${SNAPSHOT_KEEP:-30}"
+EOF
+chmod 600 "$CLOUD_CONF"
+umask 022
 
 NODE_MAJOR="${NODE_MAJOR:-24}"
 echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
@@ -180,6 +235,27 @@ ln -sfn "$INITIAL_RELEASE" "$CURRENT_LINK"
 # home dir stays uncluttered. Each script also mkdir -p's it defensively.
 mkdir -p "$INSTALL_DIR/backups"
 mkdir -p "$INSTALL_DIR/logs"
+
+# --- 6d. Restore-on-provision (box swap) — best-effort, before enabling app ---
+# If this box is configured for cloud backup AND entitled to restore AND its
+# data/ is still empty (a fresh/replacement box), pull the previous box's latest
+# snapshot so it comes up on the old games + players. This runs BEFORE step 8
+# (which enables/starts the app) so the app first-starts on restored data.
+#
+# STRICTLY best-effort and NON-FATAL: a box with no cloud config, no entitlement,
+# no prior snapshot, or no connectivity must still provision cleanly as a normal
+# empty box. The restore script itself refuses to overwrite a populated data/
+# (no --force here), so a re-run of install.sh never clobbers existing data.
+# timeout-wrapped so a network hang can't wedge provisioning.
+echo "Checking for a cloud snapshot to restore (best-effort)..."
+sudo chown -R bridgebox:bridgebox "$INSTALL_DIR"   # restore writes as bridgebox
+if sudo -u bridgebox env HOME="$INSTALL_DIR" \
+      timeout 600 bash "$BOX_DIR/bridge-box-cloud-restore.sh"; then
+    echo "Cloud restore step completed (or cleanly skipped)."
+else
+    echo "Cloud restore did not run to completion — continuing as a normal box."
+    echo "(You can restore later with: bridge cloud-restore [--force])"
+fi
 
 # --- 7. Install systemd services and timers ---
 echo "Installing systemd service files..."

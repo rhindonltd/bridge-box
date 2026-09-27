@@ -7,9 +7,10 @@ This repository (`bridge-box`) is the **provisioning and lifecycle layer** for t
 - **Factory install** — turning a fresh Raspberry Pi into a BridgeBox (`install.sh`).
 - **Network setup** — running the Pi as a self-hosted WiFi hotspot (SSID `BridgeBox-XXXX`) so users can connect directly and reach the app, with NAT redirecting ports 80/443 to the app on port 3000.
 - **App lifecycle** — starting the scorer app immediately in hotspot mode, then optionally connecting to a real WiFi network (configured via `wifi.json`) to pull and atomically deploy app updates.
+- **Data durability** — hourly local SQLite backups (disk/USB), plus an **optional, opt-in cloud backup** (to S3) for paying clubs that makes swapping a dead box for a new one trivial: provision the replacement with the same `BOX_ID` and it restores the old box's games + players on first boot. Off by default; entitlement (and therefore who can back up/restore) is controlled remotely by the vendor via a per-box bearer token + a small HTTPS endpoint, with no long-lived AWS keys on the device.
 
 ## Key behaviors to keep in mind
 
-- The device must be **usable offline first**. The app starts before any internet connectivity is attempted.
+- The device must be **usable offline first**. The app starts before any internet connectivity is attempted. The optional cloud backup respects this: offline ⇒ no upload, and that's fine (it retries next time it's online).
 - Updates are **atomic and reversible**: each release is a timestamped/commit-named directory, `current` is a symlink, and a `previous` symlink enables rollback if a build or reload fails.
 - The device is accessed by non-technical club users, so behavior should be resilient and self-recovering (services use `Restart=on-failure`).

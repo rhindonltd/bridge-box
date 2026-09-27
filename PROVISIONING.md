@@ -83,13 +83,26 @@ continuing.
 Run this as the `bridgebox` user. It downloads the installer and logs everything to
 `~/install.log` so you can review it if anything goes wrong.
 
+You must give the box a **`BOX_ID`** — a stable identifier for this club/box (e.g. `club123`). It's
+required (the installer aborts without it) because it's how the box is identified for backups: a
+replacement box provisioned with the **same `BOX_ID`** inherits the old box's cloud backups. Pass it
+as an environment variable:
+
 ```bash
-curl -sSL https://raw.githubusercontent.com/rhindonltd/bridge-box/refs/heads/main/install.sh | bash -x 2>&1 | tee ~/install.log
+curl -sSL https://raw.githubusercontent.com/rhindonltd/bridge-box/refs/heads/main/install.sh | BOX_ID=club123 bash -x 2>&1 | tee ~/install.log
 ```
+
+> If you run the installer interactively (not via the `curl | bash` pipe) and forget `BOX_ID`, it
+> will prompt you for one. Over the pipe there's no prompt, so it must be set as shown above.
+>
+> To also turn on **cloud backup** at install time, additionally pass `CLOUD_BUCKET`,
+> `CLOUD_ENDPOINT`, and `CLOUD_TOKEN` (and optionally `CLOUD_REGION`, `SNAPSHOT_KEEP`) as env vars —
+> or leave them out now and fill them into `/home/bridgebox/cloud-backup.conf` later. Cloud backup
+> stays **off** until all three are set. See "Cloud backup & box swaps" below.
 
 **What this does, in order (roughly 10–15 min):**
 1. Installs system dependencies: `git`, `curl`, `avahi-daemon`, `iptables` (+ persistence), `jq`,
-   `sqlite3`.
+   `sqlite3`, `awscli` (the last only used by the optional cloud backup feature).
 2. Installs **Node.js** (current LTS, from the NodeSource repo). The app runs as a native systemd
    service (no separate process manager).
 3. Sets up passwordless helpers so the app can request a service restart or reboot safely.
@@ -325,10 +338,62 @@ cursor, so each run only adds what's new). This is a **local** export for now �
 box. (Sending them to an external service later is a small change; it would then run in the boot
 online window rather than mid-session, and you'd want to consider that logs may contain player data.)
 
-**Backups.** Score data is backed up hourly and automatically. Backups are stored **on the device**
-(or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you want an
-off-site copy, periodically copy the newest files out of `/home/bridgebox/backups` (or the USB
-stick) to somewhere safe. Note these files contain player/game data, so treat them accordingly.
+**Backups.** Score data is backed up hourly and automatically. By default backups are stored **on the
+device** (or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you
+want an off-site copy without the cloud feature, periodically copy the newest files out of
+`/home/bridgebox/backups` (or the USB stick) to somewhere safe. Note these files contain player/game
+data, so treat them accordingly.
+
+---
+
+## Cloud backup & box swaps (optional, paid)
+
+Clubs that want a hands-off "if the box dies, plug in a new one and carry on" experience can enable
+**cloud backup**. When on, the box uploads a snapshot of all its score data to the cloud (an S3
+bucket) at each switch-on, under a folder keyed by the box's **`BOX_ID`**. A replacement box given
+the **same `BOX_ID`** downloads that snapshot on its first boot and comes up with the old box's
+games and players already in place.
+
+Key points:
+- **Off by default.** Nothing leaves the box unless cloud backup is configured. Enabling it sends
+  player/game data off-box, so it's a deliberate choice.
+- **No cloud keys live on the box.** The box holds only a small per-box **token**. Each time it
+  backs up or restores it asks a central service "is this box allowed, and here are one-time
+  credentials" — so the vendor can switch a box's backup/restore on or off remotely (e.g. for
+  billing) without touching the box.
+- **Offline-friendly.** No internet at switch-on just means no upload that time; it catches up next
+  time it's online. The guest hotspot is never affected (it's a separate radio).
+
+**To enable it**, put the details in `/home/bridgebox/cloud-backup.conf` (the installer creates this
+file with your `BOX_ID` already filled in; it stays off until the bucket + endpoint + token are set):
+
+```bash
+sudo -u bridgebox tee /home/bridgebox/cloud-backup.conf >/dev/null <<'EOF'
+BOX_ID="club123"
+CLOUD_BUCKET="bridgebox-backups-prod"
+CLOUD_REGION="eu-west-2"
+CLOUD_ENDPOINT="https://api.example.com/v1/entitlement"
+CLOUD_TOKEN="the-per-box-token-you-were-issued"
+SNAPSHOT_KEEP="30"
+EOF
+sudo -u bridgebox chmod 600 /home/bridgebox/cloud-backup.conf
+bridge cloud-backup-now      # take a snapshot now to confirm it works
+```
+
+**Swapping a box out** (the whole point):
+1. Provision the **replacement** Pi exactly as in Steps 1–4, giving it the **same `BOX_ID`** as the
+   dead box (`... | BOX_ID=club123 bash ...`) and the same `cloud-backup.conf` details (issue it a
+   fresh token; the old box's token can be revoked).
+2. During install, if the box is online and entitled, it **automatically restores** the latest
+   snapshot before starting the app — so it boots straight into the old box's data. (This only
+   happens on a fresh box; it never overwrites data that's already there.)
+3. If you need to pull the data in later by hand, run `bridge cloud-restore` (add `--force` only if
+   you deliberately want to replace data already on the box). Details in
+   `/home/bridgebox/logs/cloud-restore.log`; upload details in `.../cloud-backup.log`.
+
+> The cloud side (the bucket, the entitlement service, and issuing per-box tokens) is set up once by
+> the vendor — see `cloud-backup-endpoint-requirements.md` in this repo. As a club admin you only
+> ever deal with the `BOX_ID` and the `cloud-backup.conf` values you're given.
 
 ---
 
@@ -396,6 +461,8 @@ sudo apt-get -f install
   `en-GB`). Controls `NEXT_PUBLIC_BRIDGE_LOCALE`, which is baked into the app at build time. Set it
   at install with `BRIDGE_LOCALE=en-US curl ... | bash`; to change it later, edit this file and
   rebuild (`bridge update-now` or next boot).
+- Cloud backup config: `/home/bridgebox/cloud-backup.conf` (`BOX_ID` always; `CLOUD_BUCKET`/
+  `CLOUD_REGION`/`CLOUD_ENDPOINT`/`CLOUD_TOKEN`/`SNAPSHOT_KEEP` to enable off-box S3 backup; chmod 600)
 - Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
   `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
@@ -425,7 +492,9 @@ bridge restart       # restart the app
 bridge update-now    # check for an app update now (goes live next switch-on)
 bridge os-update     # apply OS security updates (uses the USB radio for internet)
 bridge node-upgrade 24   # move Node.js to a new major version
-bridge backup-now    # take a data backup now
+bridge backup-now    # take a local data backup now
+bridge cloud-backup-now  # upload a cloud snapshot now (if configured + entitled)
+bridge cloud-restore # restore data from the latest cloud snapshot (add --force to overwrite)
 bridge sync-players  # update the EBU player list now (needs internet)
 bridge sync-movements # update the movement list now (needs internet)
 bridge ship-logs     # export app logs since last run (local file for now)

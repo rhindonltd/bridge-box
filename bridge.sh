@@ -112,6 +112,32 @@ case "$cmd" in
     echo "Done. See: bridge logs-backup"
     ;;
 
+  cloud-backup-now)
+    # Take a fresh local backup first (so the cloud upload packages the newest
+    # verified .bak set), then run the off-box upload job. The upload is a no-op
+    # unless the box has a cloud-backup.conf AND the entitlement endpoint says
+    # this box may back up — so on a box without the paid feature this just
+    # prints "not configured" and exits cleanly. Uses the client radio; the
+    # hotspot (separate radio) is never touched. Runs as bridgebox via the
+    # online-window helper (ensure online -> run), mirroring sync-players.
+    echo "Taking a local backup, then uploading a cloud snapshot (if configured + entitled)..."
+    sudo systemctl start bridge-box-backup
+    sudo -u bridgebox env HOME=/home/bridgebox bash -c \
+      '. '"$BOX_DIR"'/bridge-box-wifi-lib.sh; bb_run_online_window "bash '"$BOX_DIR"'/bridge-box-cloud-backup.sh"'
+    echo "Done. Details: tail /home/bridgebox/logs/cloud-backup.log"
+    ;;
+
+  cloud-restore)
+    # Restore this box's data from the latest cloud snapshot for its BOX_ID.
+    # Refuses to overwrite a populated data/ unless --force is passed. No-op with
+    # a clear message if the box isn't configured or isn't entitled to restore.
+    # Pass-through args (e.g. --force). Uses the client radio; hotspot untouched.
+    echo "Restoring data from the latest cloud snapshot (if configured + entitled)..."
+    sudo -u bridgebox env HOME=/home/bridgebox bash -c \
+      '. '"$BOX_DIR"'/bridge-box-wifi-lib.sh; bb_run_online_window "bash '"$BOX_DIR"'/bridge-box-cloud-restore.sh '"$*"'"'
+    echo "Done. Details: tail /home/bridgebox/logs/cloud-restore.log"
+    ;;
+
   sync-players)
     echo "Syncing the EBU player list now (uses the client radio; hotspot stays up)."
     sudo systemctl start --wait bridge-box-player-sync
@@ -185,6 +211,8 @@ BridgeBox admin — usage: bridge <command>
   node-upgrade  Upgrade Node.js to a new major, e.g. bridge node-upgrade 24
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
+  cloud-backup-now Upload a cloud snapshot now (if configured + entitled)
+  cloud-restore Restore data from the latest cloud snapshot (add --force to overwrite)
   sync-players  Update the EBU player list now (hotspot stays up)
   sync-movements Update the movement list now (hotspot stays up)
   wifi-scan     Scan for nearby WiFi networks (hotspot stays up)

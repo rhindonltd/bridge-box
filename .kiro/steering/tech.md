@@ -17,6 +17,7 @@
 - `avahi-daemon` for mDNS (`bridge.local`).
 - `jq` for parsing `wifi.json`.
 - `git` for cloning/updating releases; `sqlite3` available for app data.
+- `awscli` for the **optional** cloud backup/restore feature (off by default): the box uploads/downloads S3 snapshots using short-lived STS credentials fetched from a vendor-hosted entitlement endpoint. Harmless on a box that never enables it.
 
 ## Conventions
 - All scripts start with `set -euo pipefail` — keep this; fail fast.

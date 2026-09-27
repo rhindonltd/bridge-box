@@ -16,6 +16,8 @@
 #           1. the update DOWNLOAD job (download newer release + npm ci)
 #           2. the player-sync job (refresh EBU players.db)
 #           3. the movement-sync job (refresh the movement list)
+#           4. the cloud-backup upload job (off-box S3 snapshot; no-op unless
+#              the box is configured + entitled — see bridge-box-cloud-backup.sh)
 #
 # Nothing here starts or blocks the app; a total failure just leaves the box on
 # the current release, serving normally. Because the hotspot is never disturbed,
@@ -101,10 +103,17 @@ fi
 # Jobs are radio-agnostic scripts that assume they're already online. They run
 # sequentially (bb_run_online_window now just ensures the client link is up,
 # then runs each); each is non-fatal. No hotspot cycle, no lock.
+#
+# The cloud-backup upload runs LAST (after the local hourly backup has had a
+# chance to produce a verified .bak set) and is a no-op unless the box is
+# configured + entitled for off-box backup — so an ordinary box behaves exactly
+# as before. Being off-box it correctly lives in the boot online window (per the
+# steering: off-box shipping becomes an online-window job), never a session timer.
 bb_run_online_window \
     "bash $BOX_DIR/bridge-box-update.sh" \
     "bash $BOX_DIR/bridge-box-player-sync.sh" \
-    "bash $BOX_DIR/bridge-box-movement-sync.sh"
+    "bash $BOX_DIR/bridge-box-movement-sync.sh" \
+    "bash $BOX_DIR/bridge-box-cloud-backup.sh"
 
 echo "=== BridgeBox online tasks done $(date -Is) ==="
 exit 0
