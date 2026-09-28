@@ -2,9 +2,10 @@
 
 > Scope note: this document specifies the **vendor-hosted backend** for the optional cloud backup
 > feature. It is NOT built in this repo — `bridge-box` stays shell + systemd. The backend lives in a
-> separate repo/stack (recommend AWS SAM or CDK). The box-side client that consumes this endpoint is
-> `bridge-box-cloud-lib.sh` (`bb_cloud_entitlement`), `bridge-box-cloud-backup.sh`, and
-> `bridge-box-cloud-restore.sh` in this repo.
+> separate repo/stack: **`bridge-box-eligibility`** (AWS SAM, Python Lambda), which implements this
+> spec (a copy of this file lives there as `REQUIREMENTS.md`, its source of truth). The box-side
+> client that consumes this endpoint is `bridge-box-cloud-lib.sh` (`bb_cloud_entitlement`),
+> `bridge-box-cloud-backup.sh`, and `bridge-box-cloud-restore.sh` in this repo.
 
 ## 1. Purpose & Scope
 

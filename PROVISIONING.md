@@ -372,7 +372,7 @@ sudo -u bridgebox tee /home/bridgebox/cloud-backup.conf >/dev/null <<'EOF'
 BOX_ID="club123"
 CLOUD_BUCKET="bridgebox-backups-prod"
 CLOUD_REGION="eu-west-2"
-CLOUD_ENDPOINT="https://api.example.com/v1/entitlement"
+CLOUD_ENDPOINT="https://eligibility.bridgebox.co.uk/v1/entitlement"
 CLOUD_TOKEN="the-per-box-token-you-were-issued"
 SNAPSHOT_KEEP="30"
 EOF

@@ -37,7 +37,7 @@
 #   CLOUD_BUCKET="bridgebox-backups-prod"
 #   CLOUD_REGION="eu-west-2"
 #   # Vendor-hosted entitlement endpoint (returns {backup,restore} + STS creds).
-#   CLOUD_ENDPOINT="https://api.example.com/v1/entitlement"
+#   CLOUD_ENDPOINT="https://eligibility.bridgebox.co.uk/v1/entitlement"
 #   # Per-box bearer token that authenticates this box to the endpoint. SECRET.
 #   CLOUD_TOKEN="..."
 #   # How many snapshots to retain per box in S3 (older ones pruned).
