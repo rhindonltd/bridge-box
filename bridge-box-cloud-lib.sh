@@ -65,9 +65,10 @@ CLOUD_ENDPOINT="${CLOUD_ENDPOINT:-}"
 CLOUD_TOKEN="${CLOUD_TOKEN:-}"
 SNAPSHOT_KEEP="${SNAPSHOT_KEEP:-30}"
 
-# Outputs of bb_cloud_entitlement (consumed by the backup/restore scripts).
+# Outputs of bb_cloud_entitlement (consumed by the backup/restore/log-ship scripts).
 BB_CLOUD_BACKUP_OK=""
 BB_CLOUD_RESTORE_OK=""
+BB_CLOUD_LOGS_OK=""
 BB_CLOUD_BUCKET=""
 BB_CLOUD_REGION=""
 BB_CLOUD_PREFIX=""
@@ -103,12 +104,12 @@ bb_cloud_enabled() {
 #
 # The ONE place that talks to the vendor endpoint. POSTs {box_id, op} with an
 # `Authorization: Bearer <CLOUD_TOKEN>` header and parses the JSON response:
-#   { "backup": bool, "restore": bool,
+#   { "backup": bool, "restore": bool, "logs": bool,
 #     "bucket": "...", "region": "...", "prefix": "<box-id>/",
 #     "credentials": { "access_key_id","secret_access_key","session_token",... } }
 #
 # On success for the requested op it:
-#   - sets BB_CLOUD_BACKUP_OK / BB_CLOUD_RESTORE_OK ("yes"/""),
+#   - sets BB_CLOUD_BACKUP_OK / BB_CLOUD_RESTORE_OK / BB_CLOUD_LOGS_OK ("yes"/""),
 #   - exports AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN and
 #     AWS_DEFAULT_REGION for the AWS CLI,
 #   - sets BB_CLOUD_BUCKET / BB_CLOUD_REGION / BB_CLOUD_PREFIX,
@@ -120,11 +121,11 @@ bb_cloud_enabled() {
 # secret/session values are ever echoed to the log.
 # ---------------------------------------------------------------------------
 bb_cloud_entitlement() {
-    local op="${1:?bb_cloud_entitlement: op (backup|restore) required}"
+    local op="${1:?bb_cloud_entitlement: op (backup|restore|logs) required}"
 
     case "$op" in
-        backup|restore) ;;
-        *) echo "cloud: invalid op '$op' (want backup|restore)"; return 1 ;;
+        backup|restore|logs) ;;
+        *) echo "cloud: invalid op '$op' (want backup|restore|logs)"; return 1 ;;
     esac
 
     if ! command -v jq >/dev/null 2>&1; then
@@ -162,12 +163,20 @@ bb_cloud_entitlement() {
 
     BB_CLOUD_BACKUP_OK=""
     BB_CLOUD_RESTORE_OK=""
+    BB_CLOUD_LOGS_OK=""
     [ "$(printf '%s' "$resp" | jq -r '.backup // false')" = "true" ] && BB_CLOUD_BACKUP_OK="yes"
     [ "$(printf '%s' "$resp" | jq -r '.restore // false')" = "true" ] && BB_CLOUD_RESTORE_OK="yes"
+    # 'logs' is additive on /v1/ — an older endpoint that omits it just leaves
+    # BB_CLOUD_LOGS_OK empty (i.e. not entitled), which is the safe default.
+    [ "$(printf '%s' "$resp" | jq -r '.logs // false')" = "true" ] && BB_CLOUD_LOGS_OK="yes"
 
     # Gate on the specific op requested.
     if [ "$op" = "backup" ] && [ -z "$BB_CLOUD_BACKUP_OK" ]; then
         echo "cloud: box is NOT entitled to backup (backup=false)."
+        return 1
+    fi
+    if [ "$op" = "logs" ] && [ -z "$BB_CLOUD_LOGS_OK" ]; then
+        echo "cloud: box is NOT entitled to ship logs (logs=false)."
         return 1
     fi
     if [ "$op" = "restore" ] && [ -z "$BB_CLOUD_RESTORE_OK" ]; then

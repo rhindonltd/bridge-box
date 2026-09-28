@@ -18,6 +18,8 @@
 #           3. the movement-sync job (refresh the movement list)
 #           4. the cloud-backup upload job (off-box S3 snapshot; no-op unless
 #              the box is configured + entitled — see bridge-box-cloud-backup.sh)
+#           5. the log-ship job (off-box app-log export; local file unless
+#              LOG_SHIP_S3=yes + logs-entitled — see bridge-box-log-ship.sh)
 #
 # Nothing here starts or blocks the app; a total failure just leaves the box on
 # the current release, serving normally. Because the hotspot is never disturbed,
@@ -113,7 +115,8 @@ bb_run_online_window \
     "bash $BOX_DIR/bridge-box-update.sh" \
     "bash $BOX_DIR/bridge-box-player-sync.sh" \
     "bash $BOX_DIR/bridge-box-movement-sync.sh" \
-    "bash $BOX_DIR/bridge-box-cloud-backup.sh"
+    "bash $BOX_DIR/bridge-box-cloud-backup.sh" \
+    "bash $BOX_DIR/bridge-box-log-ship.sh"
 
 echo "=== BridgeBox online tasks done $(date -Is) ==="
 exit 0

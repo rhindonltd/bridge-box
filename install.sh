@@ -111,6 +111,27 @@ EOF
 chmod 600 "$CLOUD_CONF"
 umask 022
 
+# Seed log-ship.conf with off-box log shipping OFF by default. This is a SEPARATE
+# opt-in from cloud backup (app logs may contain player/game data), and also
+# requires the entitlement endpoint to return logs:true for this box. The S3
+# bucket/endpoint/token come from cloud-backup.conf; only the local toggle +
+# log settings live here. Don't clobber an existing box-local file.
+LOGSHIP_CONF="$INSTALL_DIR/log-ship.conf"
+if [ ! -f "$LOGSHIP_CONF" ]; then
+  echo "Writing $LOGSHIP_CONF (off-box log shipping OFF by default)..."
+  cat > "$LOGSHIP_CONF" <<'EOF'
+# BridgeBox log-ship config (box-local, NOT in git).
+# Off-box shipping is OFF by default. Set LOG_SHIP_S3="yes" to upload app-log
+# batches to s3://<bucket>/<box-id>/logs/ (write-only) — but this ALSO requires
+# the box to be entitled (endpoint returns logs:true) and cloud-backup.conf to
+# be configured (bucket/endpoint/token). Logs may contain player/game data, so
+# this is a deliberate, separate opt-in from cloud backup.
+LOG_SHIP_S3="no"
+# Which unit(s) to export (default: the app).
+LOG_UNITS="bridge-box-app.service"
+EOF
+fi
+
 NODE_MAJOR="${NODE_MAJOR:-24}"
 echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -

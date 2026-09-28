@@ -38,13 +38,15 @@ One logical operation, called by the box at the start of a backup or restore run
   ```json
   { "box_id": "club123", "op": "backup" }
   ```
-  `op` is `backup` or `restore` — lets the endpoint vend minimally-scoped credentials per operation.
+  `op` is `backup`, `restore`, or `logs` — lets the endpoint vend minimally-scoped credentials per
+  operation.
 - **Success response (HTTP 200):**
   ```json
   {
     "box_id": "club123",
     "backup": true,
     "restore": false,
+    "logs": false,
     "bucket": "bridgebox-backups-prod",
     "region": "eu-west-2",
     "prefix": "club123/",
@@ -57,8 +59,9 @@ One logical operation, called by the box at the start of a backup or restore run
   }
   ```
   `credentials` is omitted when the requested `op` is not permitted.
-- **Authenticated but not permitted (HTTP 200, no creds):** a suspended / non-paying box gets
-  `{"backup": false, "restore": false}` and no `credentials`. The box treats this as a clean no-op.
+- **Authenticated but not permitted (HTTP 200, no creds):** a suspended / non-paying box (or one not
+  entitled to the requested op) gets the flags (`{"backup": …, "restore": …, "logs": …}`) and no
+  `credentials`. The box treats this as a clean no-op.
 - **Error responses:** `401` (missing/invalid token), `403` (token valid but box unknown, or the
   body's `box_id` doesn't match the token's box), `400` (malformed body / bad `op`), `429` (rate
   limited), `5xx` (transient). The box treats any non-2xx as "not entitled, exit 0", so errors are
@@ -66,10 +69,11 @@ One logical operation, called by the box at the start of a backup or restore run
 
 **CONTRACT REQUIREMENT (must match the box parser).** The 200 body MUST use exactly these field
 names, because `bb_cloud_entitlement()` parses them:
-`backup`, `restore`, `bucket`, `region`, `prefix`, and
+`backup`, `restore`, `logs`, `bucket`, `region`, `prefix`, and
 `credentials.access_key_id` / `credentials.secret_access_key` / `credentials.session_token`
-(`credentials.expiration` is informational). Any change to these names/shape is a breaking change and
-requires a new path version (`/v2/...`).
+(`credentials.expiration` is informational). The `logs` flag was **added additively on `/v1/`** — a
+box that only sends `backup`/`restore` simply ignores the extra field, so this is backward
+compatible. A change to any EXISTING name/shape is still a breaking change requiring `/v2/...`.
 
 ## 4. Functional Requirements
 
@@ -79,12 +83,15 @@ requires a new path version (`/v2/...`).
 - **FR2 — Look up entitlement.** Read `{backup, restore, status}` for the box. `status != active`
   forces both flags to `false` regardless of the stored booleans.
 - **FR3 — Vend scoped, short-lived credentials.** For a permitted op, call STS `AssumeRole` with a
-  **session policy** restricting the returned credentials to exactly `s3://<bucket>/<BOX_ID>/*`
-  (plus a bucket-level `ListBucket` conditioned on the `<BOX_ID>/` prefix). Credentials MUST be
+  **session policy** restricting the returned credentials to the box's prefix
+  (`s3://<bucket>/<BOX_ID>/*`, or the narrower `.../<BOX_ID>/logs/*` for `logs`). Credentials MUST be
   short-lived (≤ 15 min is sufficient for one run).
-- **FR4 — Per-op least privilege.** `op:backup` credentials allow `s3:PutObject`, `s3:ListBucket`,
-  and `s3:DeleteObject` (for snapshot-retention pruning) under the prefix; `op:restore` credentials
-  allow `s3:GetObject` and `s3:ListBucket` only. No cross-box access under any circumstances.
+- **FR4 — Per-op least privilege.** `op:backup` credentials allow `s3:PutObject`, `s3:GetObject`,
+  `s3:DeleteObject` (for snapshot/object retention) under the prefix plus a prefix-scoped
+  `s3:ListBucket`; `op:restore` credentials allow `s3:GetObject` + prefix-scoped `s3:ListBucket`
+  only; `op:logs` credentials allow **`s3:PutObject` ONLY**, scoped to `<BOX_ID>/logs/*` — logs are
+  **write-only** from the box (no read/list/delete; the vendor reads and prunes logs server-side). No
+  cross-box access under any circumstances.
 - **FR5 — Central disable.** Setting a box to `status: suspended` (or `backup:false`/`restore:false`)
   MUST cause the very next call to return no credentials. Because vended credentials are short-lived,
   an in-flight box loses access within minutes — no key rotation required.
@@ -132,8 +139,9 @@ flowchart LR
 
 ### Entitlement store (DynamoDB) — suggested schema
 - **PK:** `box_id` (string).
-- **Attributes:** `status` (`active` | `suspended`), `backup` (bool), `restore` (bool),
-  `token_hashes` (string set — hashed tokens, supports rotation), `created_at`, `updated_at`,
+- **Attributes:** `status` (`active` | `suspended`), `backup` (bool), `restore` (bool), `logs` (bool
+  — off-box app-log shipping; separate opt-in, defaults false because logs may carry player/game
+  data), `token_hashes` (string set — hashed tokens, supports rotation), `created_at`, `updated_at`,
   optional `plan` / `notes`.
 - **Admin path:** a small script or console edit to set `status` / flags — this is the "remote
   control" surface the vendor uses to switch a paying box on or a lapsed box off.
@@ -172,9 +180,11 @@ flowchart LR
 - **T2 — Auth:** valid token → mapped BOX_ID; missing/invalid token → 401; token/BOX_ID mismatch →
   403.
 - **T3 — Entitlement:** `active`+`backup:true` vends backup creds; `suspended` vends none; `restore`
-  op with `restore:false` vends none.
+  op with `restore:false` vends none; `logs` op with `logs:true` vends a **write-only** policy
+  (`PutObject` only under `<box>/logs/*`, no Get/List/Delete), and `logs:false` vends none.
 - **T4 — Isolation (CRITICAL):** credentials vended for `club123` MUST fail any S3 op against
-  `club999/`. Automate against a real or mocked S3 (session-policy boundary).
+  `club999/`. For `logs` creds, additionally confirm they cannot Get/List/Delete even within the
+  box's own prefix (write-only). Automate against a real or mocked S3 (session-policy boundary).
 - **T5 — Expiry:** vended credentials are rejected after `expiration`.
 - **T6 — End-to-end:** point `bb_cloud_entitlement()` at a deployed dev endpoint and confirm a full
   backup + restore round-trip.
@@ -192,9 +202,11 @@ flowchart LR
 ## 11. Box-side cross-reference
 
 The box consumes this endpoint through a single function so the contract stays in one place:
-- `bridge-box-cloud-lib.sh` → `bb_cloud_entitlement <backup|restore>`: POSTs `{box_id, op}` with the
-  bearer token, parses the response fields listed in §3, and exports `AWS_ACCESS_KEY_ID` /
+- `bridge-box-cloud-lib.sh` → `bb_cloud_entitlement <backup|restore|logs>`: POSTs `{box_id, op}` with
+  the bearer token, parses the response fields listed in §3, and exports `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` (+ `AWS_DEFAULT_REGION`) for the AWS CLI.
+- `bridge-box-log-ship.sh` uses `op=logs` to ship app-log batches to `<box>/logs/` (write-only,
+  separate opt-in via `LOG_SHIP_S3` in `log-ship.conf`).
 - Config on the box (`/home/bridgebox/cloud-backup.conf`, chmod 600): `BOX_ID`, `CLOUD_BUCKET`,
   `CLOUD_REGION`, `CLOUD_ENDPOINT`, `CLOUD_TOKEN`, `SNAPSHOT_KEEP`.
 - Consumers: `bridge-box-cloud-backup.sh` (uploads changed DBs as content-addressed

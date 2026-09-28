@@ -158,12 +158,14 @@ case "$cmd" in
     ;;
 
   ship-logs)
-    # Export the app's logs since the last run. For now this is a LOCAL export
-    # (a timestamped file under /home/bridgebox/log-ship/exports/) — it does NOT
-    # go off-box yet, so it needs no internet and won't touch the hotspot.
-    echo "Exporting app logs since last run (local file export)..."
+    # Export the app's logs since the last run. Ships OFF-BOX to S3 when the box
+    # opts in (LOG_SHIP_S3="yes" in log-ship.conf) AND is entitled (endpoint
+    # returns logs:true); otherwise (or if offline/not entitled) it falls back to
+    # a LOCAL timestamped file under /home/bridgebox/log-ship/exports/. Either
+    # way it uses the client radio only; the hotspot is untouched.
+    echo "Exporting app logs since last run (S3 if enabled + entitled, else local file)..."
     sudo -u bridgebox env HOME=/home/bridgebox bash "$BOX_DIR/bridge-box-log-ship.sh"
-    echo "Done. Exports: /home/bridgebox/log-ship/exports/  (details: tail /home/bridgebox/logs/log-ship.log)"
+    echo "Done. Details: tail /home/bridgebox/logs/log-ship.log"
     ;;
 
   version)
@@ -216,7 +218,7 @@ BridgeBox admin — usage: bridge <command>
   sync-players  Update the EBU player list now (hotspot stays up)
   sync-movements Update the movement list now (hotspot stays up)
   wifi-scan     Scan for nearby WiFi networks (hotspot stays up)
-  ship-logs     Export app logs since last run (local file for now)
+  ship-logs     Export app logs since last run (to S3 if enabled+entitled, else local file)
   version       Show the running app version (from /healthz)
   wifi          Show WiFi config, or set it: bridge wifi <ssid> <password> [hidden]
   password      Show this box's hotspot SSID + password

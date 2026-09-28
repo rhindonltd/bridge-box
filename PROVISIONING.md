@@ -333,10 +333,19 @@ sync. Details in `/home/bridgebox/logs/movement-sync.log`.
 
 **App logs.** The scoring app's own logs go to the system journal (`bridge logs`, or
 `journalctl -u bridge-box-app`). To collect them for analysis, `bridge ship-logs` exports everything
-since the last export to a timestamped file under `/home/bridgebox/log-ship/exports/` (it tracks a
-cursor, so each run only adds what's new). This is a **local** export for now — nothing leaves the
-box. (Sending them to an external service later is a small change; it would then run in the boot
-online window rather than mid-session, and you'd want to consider that logs may contain player data.)
+since the last export (it tracks a cursor, so each run only adds what's new). By default this is a
+**local** export to a timestamped file under `/home/bridgebox/log-ship/exports/` — nothing leaves the
+box.
+
+**Optional: ship app logs to the cloud.** For fleet diagnostics you can have the box upload its app
+logs off-box to S3 (write-only, under `s3://<bucket>/<box-id>/logs/`). This is a **separate opt-in
+from cloud backup** and needs two things: (1) the box is **entitled** — the vendor issues/updates its
+token with `--logs true` (or `admin.py set --logs true`); and (2) the box opts in locally by setting
+`LOG_SHIP_S3="yes"` in `/home/bridgebox/log-ship.conf`. It reuses the same `cloud-backup.conf`
+bucket/endpoint/token and runs in the boot online window (client radio; hotspot untouched). If either
+gate is off — or the box is offline — it silently falls back to the local export, so nothing is lost.
+**Privacy note:** app logs may contain player/game data, so enabling this sends that off-box — hence
+the deliberate separate switch. Details in `/home/bridgebox/logs/log-ship.log`.
 
 **Backups.** Score data is backed up hourly and automatically. By default backups are stored **on the
 device** (or on a USB stick if one is plugged in) — they are not sent anywhere off the box. If you
@@ -463,6 +472,9 @@ sudo apt-get -f install
   rebuild (`bridge update-now` or next boot).
 - Cloud backup config: `/home/bridgebox/cloud-backup.conf` (`BOX_ID` always; `CLOUD_BUCKET`/
   `CLOUD_REGION`/`CLOUD_ENDPOINT`/`CLOUD_TOKEN`/`SNAPSHOT_KEEP` to enable off-box S3 backup; chmod 600)
+- Log-ship config: `/home/bridgebox/log-ship.conf` (`LOG_SHIP_S3="yes"` to opt in to off-box log
+  shipping — separate from backup, also needs the `logs` entitlement; reuses `cloud-backup.conf` for
+  bucket/endpoint/token)
 - Optional app env override: `/home/bridgebox/scorer.env` (else the built-in template with absolute
   `DATABASE_URL=/home/bridgebox/data` and `DATABASE_GAMES_URL=/home/bridgebox/data/games` is used)
 - Provisioning-complete marker: `/home/bridgebox/.provisioned` (present only after a successful install)
@@ -497,7 +509,7 @@ bridge cloud-backup-now  # upload a cloud snapshot now (if configured + entitled
 bridge cloud-restore # restore data from the latest cloud snapshot (add --force to overwrite)
 bridge sync-players  # update the EBU player list now (needs internet)
 bridge sync-movements # update the movement list now (needs internet)
-bridge ship-logs     # export app logs since last run (local file for now)
+bridge ship-logs     # export app logs since last run (to S3 if enabled+entitled, else local file)
 bridge version       # show the running app version
 bridge wifi          # show WiFi config (or: bridge wifi <ssid> <password> [hidden])
 bridge password      # show this box's hotspot SSID + password
