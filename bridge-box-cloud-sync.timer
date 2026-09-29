@@ -1,0 +1,20 @@
+[Unit]
+Description=Run BridgeBox cloud sync (game backup + log shipping) periodically
+
+[Timer]
+# Fresh off-box copies for disaster recovery: run soon after boot, then every
+# ~15 min while the box is on, so a box that falls over mid-session loses at
+# most a few minutes of games. (The box is typically on only for a ~3h session,
+# so this is the cadence that matters, not a clock across the day.)
+#
+# RandomizedDelaySec spreads a fleet's uploads so they don't all hit S3 at the
+# same instant. Persistent so a missed run fires on next boot.
+OnBootSec=3min
+OnUnitActiveSec=15min
+RandomizedDelaySec=90s
+AccuracySec=30s
+Persistent=true
+Unit=bridge-box-cloud-sync.service
+
+[Install]
+WantedBy=timers.target

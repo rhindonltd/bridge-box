@@ -358,8 +358,11 @@ data, so treat them accordingly.
 ## Cloud backup & box swaps (optional, paid)
 
 Clubs that want a hands-off "if the box dies, plug in a new one and carry on" experience can enable
-**cloud backup**. When on, the box uploads a snapshot of all its score data to the cloud (an S3
-bucket) at each switch-on, under a folder keyed by the box's **`BOX_ID`**. A replacement box given
+**cloud backup**. When on, the box uploads its score data to the cloud (an S3 bucket) under a folder
+keyed by the box's **`BOX_ID`** — at each switch-on **and then every ~15 minutes while it's on**, so
+a box that fails mid-session loses at most a few minutes of games (only data that actually changed is
+re-uploaded, so this is cheap). Only game data + app logs are pushed on this schedule; app updates
+still land at switch-on. A replacement box given
 the **same `BOX_ID`** downloads that snapshot on its first boot and comes up with the old box's
 games and players already in place.
 
@@ -491,7 +494,8 @@ sudo apt-get -f install
 | `bridge-box-player-sync.service` | bridgebox | Manual only (`bridge sync-players`) — no timer; runs in an online window |
 | `bridge-box-movement-sync.service` | bridgebox | Manual only (`bridge sync-movements`) — no timer; runs in an online window |
 | `bridge-box-healthcheck.timer` | bridgebox | Every ~2 min: restart the app if it's not responding |
-| `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases |
+| `bridge-box-backup.timer` | bridgebox | Hourly: safe SQLite backups of all databases (local disk/USB) |
+| `bridge-box-cloud-sync.timer` | bridgebox | Every ~15 min: push game data + logs off-box to S3 for disaster recovery (no-op unless cloud backup is enabled) |
 
 **Handy commands**
 A single `bridge` command wraps the common tasks — run `bridge help` for the full list. The main

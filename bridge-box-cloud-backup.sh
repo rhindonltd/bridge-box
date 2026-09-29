@@ -78,18 +78,29 @@ fi
 
 if ! bb_cloud_enabled; then
     echo "cloud-backup: not configured (no/incomplete cloud-backup.conf) — skipping. Local backups are unaffected."
+    bb_cloud_write_status backup skipped_not_configured
     exit 0
 fi
 
 # --- Tooling ---
 if ! command -v aws >/dev/null 2>&1; then
     echo "cloud-backup: AWS CLI not installed — cannot upload. Skipping."
+    bb_cloud_write_status backup error
     exit 0
 fi
 
 # --- Entitlement + short-lived creds ---
 if ! bb_cloud_entitlement backup; then
     echo "cloud-backup: not entitled / endpoint unavailable — skipping (exit 0)."
+    # bb_cloud_entitlement sets BB_CLOUD_ENDPOINT_REACHED=yes if it got a valid
+    # response from the endpoint (so a false here = not entitled) vs unreachable
+    # (= offline). The cloud-backup.log line above has the precise reason either
+    # way; this just picks the coarse status the app shows.
+    if [ "${BB_CLOUD_ENDPOINT_REACHED:-}" = "yes" ]; then
+        bb_cloud_write_status backup not_entitled
+    else
+        bb_cloud_write_status backup offline
+    fi
     exit 0
 fi
 # Tidy exported creds out of the environment on the way out, whatever happens.
@@ -131,9 +142,16 @@ S3_BASE="s3://${BB_CLOUD_BUCKET}/${BB_CLOUD_PREFIX%/}"
 WORK="$(mktemp -d /tmp/bridge-cloud.XXXXXX)"
 STAGE="$WORK/stage"
 mkdir -p "$STAGE"
+# Outcome recorded to the status file on exit (via the trap). Defaults to
+# "error" so any abort path below is reported as such; set to "ok" only when the
+# manifest is committed. The pre-entitlement gates above wrote their own status
+# (skipped_not_configured / not_entitled / offline) and exited before this trap
+# was installed, so they're already covered.
+RESULT="error"
 # Guarded cleanup: only ever remove our own mktemp workspace.
 # shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT` below.
 cleanup() {
+    bb_cloud_write_status backup "$RESULT"
     case "$WORK" in
         /tmp/bridge-cloud.*) rm -rf "$WORK" 2>/dev/null || true ;;
     esac
@@ -244,6 +262,8 @@ fi
 # Only now that the manifest is committed do we advance the local hash cache.
 mv "$NEW_STATE" "$STATE_FILE" 2>/dev/null || cp "$NEW_STATE" "$STATE_FILE" 2>/dev/null || true
 echo "cloud-backup: manifest committed for BOX_ID=$BOX_ID (set of ${#DBS[@]} DB(s))."
+# Manifest is committed = a successful backup. The EXIT trap records this.
+RESULT="ok"
 
 # --- Retention: keep the newest $SNAPSHOT_KEEP manifests; GC unreferenced objects ---
 KEEP="${SNAPSHOT_KEEP:-30}"

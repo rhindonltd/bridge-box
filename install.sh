@@ -177,6 +177,19 @@ sudo tee /usr/local/bridgebox/bin/wifi-ctl.sh > /dev/null <<'EOF'
 exec /bin/bash /home/bridgebox/bridge-box/bridge-box-wifi-ctl.sh "$@"
 EOF
 
+# Fixed-path wrapper so the scorer app (running as bridgebox) can trigger a
+# "cloud sync now" — an on-demand off-box game-data backup + log ship — e.g. a
+# director "back up now" button. --no-block queues the oneshot and returns
+# immediately (fire-and-forget); the app reads /home/bridgebox/cloud-sync-status.json
+# for the outcome/last-success time. The service itself is a no-op unless the box
+# is cloud-configured + entitled, so this is harmless on a plain box. The app
+# never touches S3/entitlement directly — it only asks provisioning to run its
+# own job, exactly like restart-app.sh / wifi-ctl.sh.
+sudo tee /usr/local/bridgebox/bin/cloud-sync-now.sh > /dev/null <<'EOF'
+#!/bin/bash
+exec /bin/systemctl start --no-block bridge-box-cloud-sync.service
+EOF
+
 sudo chmod 750 /usr/local/bridgebox/bin/*.sh
 sudo chown root:root /usr/local/bridgebox/bin/*.sh
 
@@ -194,6 +207,7 @@ bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/restart-app.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/reboot.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/apply-nat.sh
 bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/wifi-ctl.sh
+bridgebox ALL=(ALL) NOPASSWD: /usr/local/bridgebox/bin/cloud-sync-now.sh
 EOF
 
 sudo chmod 440 $SUDOERS_FILE
@@ -288,6 +302,10 @@ sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-backup.timer" /etc/systemd/system/
+# cloud-sync: periodic (~15 min) off-box game-data backup + log shipping for
+# disaster recovery. No-op unless the box is cloud-configured + entitled.
+sudo cp "$BOX_DIR/bridge-box-cloud-sync.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-cloud-sync.timer" /etc/systemd/system/
 # player-sync.service is used by the manual `bridge sync-players` path (it
 # ensures the client link is online, then runs the sync job). No player-sync
 # TIMER — sync runs at boot (bridge-box-online-tasks) or manually.
@@ -318,7 +336,7 @@ sudo systemctl daemon-reload
 # bridge-box-online-tasks and build fire at boot via their ordering;
 # player-sync.service has no timer (manual/boot only).
 sudo systemctl enable bridge-box-root bridge-box-online-tasks bridge-box-build bridge-box-app
-sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer
+sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer bridge-box-cloud-sync.timer
 # Watch wifi.json and re-apply the client link on change (no reboot needed).
 sudo systemctl enable bridge-box-wifi-apply.path
 sudo systemctl start bridge-box-root
@@ -328,6 +346,7 @@ sudo systemctl start bridge-box-wifi-apply.path
 # bridge-box-build runs after online-tasks; enabling is enough (it fires at boot).
 sudo systemctl start bridge-box-healthcheck.timer
 sudo systemctl start bridge-box-backup.timer
+sudo systemctl start bridge-box-cloud-sync.timer
 
 # --- 8b. Initialise the EBU player list (soft-deferred) ---
 # Try once now so the box ships with a populated players.db. NON-fatal: if

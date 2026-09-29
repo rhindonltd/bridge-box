@@ -127,6 +127,18 @@ case "$cmd" in
     echo "Done. Details: tail /home/bridgebox/logs/cloud-backup.log"
     ;;
 
+  cloud-sync-now)
+    # Trigger the periodic cloud-sync job (game backup + log ship) right now —
+    # the same unit the 15-min timer and the app's "sync now" button fire. No-op
+    # unless the box is cloud-configured + entitled. Non-blocking; check the
+    # result via the status file or the logs.
+    echo "Triggering a cloud sync now (game backup + log shipping)..."
+    sudo -n /usr/local/bridgebox/bin/cloud-sync-now.sh 2>/dev/null || \
+        sudo systemctl start --no-block bridge-box-cloud-sync.service
+    echo "Started. Last-run status: /home/bridgebox/cloud-sync-status.json"
+    echo "Details: tail /home/bridgebox/logs/{cloud-backup,log-ship}.log"
+    ;;
+
   cloud-restore)
     # Restore this box's data from the latest cloud snapshot for its BOX_ID.
     # Refuses to overwrite a populated data/ unless --force is passed. No-op with
@@ -214,6 +226,7 @@ BridgeBox admin — usage: bridge <command>
   cleanup-legacy One-off: remove retired systemd units after an update
   backup-now    Take a data backup now
   cloud-backup-now Upload a cloud snapshot now (if configured + entitled)
+  cloud-sync-now   Run game backup + log shipping now (same as the 15-min timer / app button)
   cloud-restore Restore data from the latest cloud snapshot (add --force to overwrite)
   sync-players  Update the EBU player list now (hotspot stays up)
   sync-movements Update the movement list now (hotspot stays up)
