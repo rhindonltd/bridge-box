@@ -14,7 +14,7 @@ RELEASE_DIR="${1:?usage: bridge-box-deploy-env.sh <release-dir>}"
 INSTALL_DIR="/home/bridgebox"
 BOX_LOCAL="$INSTALL_DIR/scorer.env"
 TEMPLATE="$INSTALL_DIR/bridge-box/scorer.env.template"
-e# Box-local locale, written by install.sh. Controls NEXT_PUBLIC_BRIDGE_LOCALE,
+# Box-local locale, written by install.sh. Controls NEXT_PUBLIC_BRIDGE_LOCALE,
 # which Next.js bakes into the client bundle at BUILD time — so it must be in
 # the .env before every build (initial install AND Phase 2 rebuilds), not just
 # the runtime service env. Default matches the app's default.
