@@ -104,14 +104,21 @@ _sink_local() {
 # (caller then falls back to local). Never fatal.
 _sink_s3() {
     local batch="$1"
+    # LOG_SHIP_S3 off => not an S3 box at all; leave status alone (the local sink
+    # is the intended destination, not a fallback), so don't record a "logs" row.
     [ "$LOG_SHIP_S3" = "yes" ] || return 1
     [ -f "$CLOUD_LIB" ] || { echo "sink(s3): cloud lib missing — using local."; return 1; }
     command -v aws >/dev/null 2>&1 || { echo "sink(s3): aws CLI missing — using local."; return 1; }
     # shellcheck source=bridge-box-cloud-lib.sh
     . "$CLOUD_LIB"
-    bb_cloud_enabled || { echo "sink(s3): cloud not configured — using local."; return 1; }
+    bb_cloud_enabled || { echo "sink(s3): cloud not configured — using local."; bb_cloud_write_status logs skipped_not_configured; return 1; }
     if ! bb_cloud_entitlement logs; then
         echo "sink(s3): not entitled to ship logs — using local."
+        if [ "${BB_CLOUD_ENDPOINT_REACHED:-}" = "yes" ]; then
+            bb_cloud_write_status logs not_entitled
+        else
+            bb_cloud_write_status logs offline
+        fi
         return 1
     fi
     # Tidy the short-lived creds out of the environment when we return.
@@ -129,11 +136,13 @@ _sink_s3() {
     if timeout "$S3_TIMEOUT" aws s3 cp --region "$BB_CLOUD_REGION" "$gz" "$key" >>"$LOGFILE" 2>&1; then
         echo "sink(s3): uploaded OK."
         rm -f "$gz" 2>/dev/null || true
+        bb_cloud_write_status logs ok
         bb_cloud_clear_creds
         return 0
     fi
     echo "sink(s3): upload FAILED — using local."
     rm -f "$gz" 2>/dev/null || true
+    bb_cloud_write_status logs error
     bb_cloud_clear_creds
     return 1
 }

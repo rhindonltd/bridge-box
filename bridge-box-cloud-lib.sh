@@ -72,6 +72,9 @@ BB_CLOUD_LOGS_OK=""
 BB_CLOUD_BUCKET=""
 BB_CLOUD_REGION=""
 BB_CLOUD_PREFIX=""
+# Set to "yes" by bb_cloud_entitlement when the endpoint returns a valid response
+# (lets callers tell "endpoint said no" apart from "couldn't reach the endpoint").
+BB_CLOUD_ENDPOINT_REACHED=""
 
 # Load the box-local config, if present. Safe under `set -u`. Returns 0 always
 # (absence of config is a normal "feature off" state, not an error).
@@ -140,6 +143,10 @@ bb_cloud_entitlement() {
     # Ensure config is loaded (idempotent).
     bb_cloud_enabled || { echo "cloud: not configured — skipping."; return 1; }
 
+    # Reset the reachability flag; set to "yes" once we get a valid JSON response
+    # (lets callers distinguish "endpoint said no" from "couldn't reach it").
+    BB_CLOUD_ENDPOINT_REACHED=""
+
     echo "cloud: requesting '$op' entitlement for BOX_ID=$BOX_ID ..."
     local resp
     # -fsS: fail on HTTP errors, silent progress, show errors. --max-time bounds
@@ -160,6 +167,9 @@ bb_cloud_entitlement() {
         echo "cloud: entitlement response was not valid JSON — treating as NOT entitled."
         return 1
     fi
+    # We got a well-formed response from the endpoint — it's reachable.
+    # shellcheck disable=SC2034  # read by sourcing scripts (cloud-backup / log-ship).
+    BB_CLOUD_ENDPOINT_REACHED="yes"
 
     BB_CLOUD_BACKUP_OK=""
     BB_CLOUD_RESTORE_OK=""
@@ -214,5 +224,61 @@ bb_cloud_entitlement() {
 # long-lived shell doesn't keep them around). Safe to call unconditionally.
 bb_cloud_clear_creds() {
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN 2>/dev/null || true
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# bb_cloud_write_status <job> <result>
+#   Record the outcome of a cloud job so the scorer app can show the director a
+#   "last backed up at …" line. <job> is "backup" or "logs"; <result> is one of:
+#     ok | skipped_not_configured | not_entitled | offline | error
+#
+#   Writes /home/bridgebox/cloud-sync-status.json ATOMICALLY (temp + rename), so
+#   the app never reads a half-written file. Each job owns only its own section
+#   and PRESERVES the other job's section (read-modify-write via jq), so the file
+#   is correct no matter which job/trigger last ran. `last_success` only advances
+#   on result "ok"; `last_attempt` advances every run. The file lives OUTSIDE
+#   data/ on purpose, so it isn't swept into the cloud backup (which would cause
+#   a needless upload every run).
+#
+#   Contract for the app is documented in cloud-sync-app-contract.md. Non-fatal:
+#   a failure to write status never affects the job's own exit.
+# ---------------------------------------------------------------------------
+BB_CLOUD_STATUS_FILE="${BB_CLOUD_STATUS_FILE:-$BB_INSTALL_DIR/cloud-sync-status.json}"
+
+bb_cloud_write_status() {
+    local job="$1" result="$2"
+    command -v jq >/dev/null 2>&1 || return 0
+    case "$job" in backup|logs) ;; *) return 0 ;; esac
+
+    local now existing tmp
+    now="$(date -Is 2>/dev/null || date)"
+    # Start from the existing file if it's valid JSON, else an empty object.
+    if [ -f "$BB_CLOUD_STATUS_FILE" ] && jq empty "$BB_CLOUD_STATUS_FILE" >/dev/null 2>&1; then
+        existing="$(cat "$BB_CLOUD_STATUS_FILE")"
+    else
+        existing='{}'
+    fi
+
+    # last_success advances only on "ok"; otherwise carry the previous value.
+    local prev_success=""
+    prev_success="$(printf '%s' "$existing" | jq -r --arg j "$job" '.[$j].last_success // empty' 2>/dev/null || echo "")"
+    local new_success="$prev_success"
+    [ "$result" = "ok" ] && new_success="$now"
+
+    tmp="$(mktemp "${BB_CLOUD_STATUS_FILE}.XXXXXX" 2>/dev/null)" || return 0
+    if printf '%s' "$existing" | jq \
+            --arg j "$job" --arg res "$result" --arg att "$now" \
+            --arg suc "$new_success" --argjson en "$(bb_cloud_enabled >/dev/null 2>&1 && echo true || echo false)" \
+            '.enabled = $en
+             | .[$j] = { last_success: ($suc | select(. != "") // null),
+                         last_attempt: $att,
+                         last_result: $res }' \
+            > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$BB_CLOUD_STATUS_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+        chmod 644 "$BB_CLOUD_STATUS_FILE" 2>/dev/null || true
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
     return 0
 }

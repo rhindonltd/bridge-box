@@ -1,0 +1,26 @@
+[Unit]
+Description=BridgeBox periodic cloud sync (game data backup + log shipping)
+After=bridge-box-app.service
+
+[Service]
+# Periodic DR sync, fired by bridge-box-cloud-sync.timer (~every 15 min while the
+# box is on). Ensures the client link is online, then runs the off-box cloud
+# BACKUP job and the LOG-SHIP job in sequence. Both are:
+#   - no-ops unless the box is cloud-configured + entitled (so a plain box does
+#     nothing), and
+#   - safe against the live app (sqlite3 .backup is an online hot copy) — this is
+#     deliberately allowed to run mid-session so a box that dies loses at most
+#     ~15 min of games.
+# Uses the CLIENT radio only; the hotspot (separate radio) is never touched.
+#
+# NOTE: this timer covers DATA durability only. App-update DOWNLOAD and, crucially,
+# ACTIVATION (the `current` swap + app restart) stay on the power cycle — we never
+# restart the scorer app onto new code mid-session. Player/movement sync also stay
+# boot-only (reconstructible, no DR value).
+Type=oneshot
+User=bridgebox
+Environment=HOME=/home/bridgebox
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/bash -c '. /home/bridgebox/bridge-box/bridge-box-wifi-lib.sh; bb_run_online_window "bash /home/bridgebox/bridge-box/bridge-box-cloud-backup.sh" "bash /home/bridgebox/bridge-box/bridge-box-log-ship.sh"'
+StandardOutput=journal
+StandardError=journal
