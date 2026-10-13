@@ -538,3 +538,9 @@ bridge-box-online-tasks -b`).
   failed to configure. Check `sudo journalctl -u bridge-box-root -b` for a captive-portal warning,
   and confirm the drop-in exists: `ls /etc/NetworkManager/dnsmasq-shared.d/`. Typing `bridge.local`
   always works as a fallback.
+- *A tablet or phone won't join the hotspot (esp. Amazon Fire tablets):* the box disables PMF
+  (802.11w) on the hotspot specifically because some budget devices can't associate otherwise, so
+  most such cases are already handled. If a device still won't join after a reboot, confirm PMF is
+  off: `nmcli -g 802-11-wireless-security.pmf connection show bridge-hotspot` should print `1`
+  (disable). If it shows something else, `sudo systemctl restart bridge-box-root` re-applies it. (A
+  box provisioned before this change picks it up automatically on its next boot.)

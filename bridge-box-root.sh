@@ -80,6 +80,26 @@ bring_up_hotspot() {
             nmcli connection modify "$CONNECTION_NAME" ipv4.method shared \
                 connection.autoconnect yes connection.autoconnect-priority 100 2>&1 || true
         fi
+        # Disable PMF (Protected Management Frames / 802.11w) on the hotspot.
+        # NetworkManager defaults AP-mode WPA to PMF "optional", which some
+        # clients — notably Amazon Fire tablets and other budget chipsets — fail
+        # to associate with. Forcing it off (802-11-wireless-security.pmf=1 =>
+        # "disable") makes the hotspot accept them. AP radio only — the client
+        # link is a separate connection and is untouched.
+        #
+        # Only modify (and only bounce the link) if it isn't already disabled, so
+        # a correctly-configured box doesn't needlessly cycle its hotspot on every
+        # boot. The guard also covers a hotspot left over from an older release
+        # (which would still have PMF optional): detect, set, re-activate once.
+        CUR_PMF=$(nmcli -g 802-11-wireless-security.pmf connection show "$CONNECTION_NAME" 2>/dev/null || echo "")
+        if [ "$CUR_PMF" != "1" ] && [ "$CUR_PMF" != "disable" ]; then
+            echo "Disabling PMF on hotspot (was '${CUR_PMF:-default}') for Fire-tablet compatibility."
+            nmcli connection modify "$CONNECTION_NAME" 802-11-wireless-security.pmf 1 2>&1 || true
+            # If it's already up, re-activate so the running AP picks up the change.
+            if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
+                nmcli connection up "$CONNECTION_NAME" 2>&1 || true
+            fi
+        fi
         # Confirm it's actually active.
         sleep 2
         if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
