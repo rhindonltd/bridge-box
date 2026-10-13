@@ -86,15 +86,21 @@ echo "    Android/Fire /generate_204 -> HTTP 204 (empty)   OR a 302 to the app"
 echo "    iOS /hotspot-detect.html   -> 200 'Success' body OR a 302 to the app"
 echo "    Windows /connecttest.txt   -> 200 'Microsoft Connect Test'"
 echo "  A plain 200 of the app's HTML, or a 404, is what makes Fire OS say 'no internet'."
+# Where to send the probe. The wlan0 PREROUTING redirect (80->3000) only fires
+# for packets ARRIVING on wlan0 from a client — NOT for loopback traffic the box
+# sends to itself — so curling 127.0.0.1:80 hits nothing (false "???"). Test the
+# app DIRECTLY on its real port (what a redirected client packet actually lands
+# on). We also try the hotspot IP on :3000 as a cross-check.
+PROBE_TARGET="http://127.0.0.1:$APP_PORT"
 probe() {
     local host="$1" path="$2"
     local out code loc
-    # Hit the box on :80 (NAT would send a real client here to the app).
-    out=$(curl -s -o /dev/null -D - -m 5 -H "Host: $host" "http://127.0.0.1:80$path" 2>/dev/null)
+    out=$(curl -s -o /dev/null -D - -m 5 -H "Host: $host" "$PROBE_TARGET$path" 2>/dev/null)
     code=$(printf '%s' "$out" | awk 'NR==1{print $2}')
     loc=$(printf '%s' "$out" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
-    printf '    %-28s -> HTTP %s%s\n' "$path" "${code:-???}" "${loc:+  (Location: $loc)}"
+    printf '    %-28s -> HTTP %s%s\n' "$path" "${code:-NO-RESPONSE}" "${loc:+  (Location: $loc)}"
 }
+echo "  (probing the app directly on :$APP_PORT — the port a client's :80 packet is redirected to)"
 probe "connectivitycheck.gstatic.com" "/generate_204"
 probe "clients3.google.com"           "/generate_204"
 probe "www.google.com"                "/gen_204"
