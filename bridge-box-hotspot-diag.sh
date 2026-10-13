@@ -113,6 +113,51 @@ echo "    * 204 for the generate_204 probes -> OS thinks 'online', won't auto-po
 echo "    * 200 of app HTML / 404 / refused -> THIS is the bug: implement the probe"
 echo "      handlers in bridge-box-scorer (see captive-portal-app-contract.md)."
 
+# --- 4b. Client L3 reachability (does the tablet get an IP + reach the box?) --
+line "4b. Client connectivity (DHCP lease + can the box's app be reached on :80)"
+echo "  Box address on $IFACE:"
+ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print "    " $4}' || true
+
+echo "  DHCP leases handed out by the hotspot's shared dnsmasq:"
+# NetworkManager 'shared' runs a dnsmasq whose leases live in one of these.
+LEASES=""
+for f in /var/lib/NetworkManager/dnsmasq-"$IFACE".leases \
+         /var/lib/misc/dnsmasq.leases \
+         /var/lib/NetworkManager/dnsmasq-*.leases; do
+    [ -f "$f" ] && LEASES="$f" && break
+done
+if [ -n "$LEASES" ]; then
+    if [ -s "$LEASES" ]; then
+        sed 's/^/    /' "$LEASES"
+        echo "    ^ if your tablet's MAC/IP is here, DHCP is working."
+    else
+        bad "lease file $LEASES is EMPTY — no client has been given an IP."
+        echo "       A device that associates but gets no lease shows 'No Internet' on a raw IP."
+    fi
+else
+    warn "no dnsmasq lease file found — can't confirm DHCP (NM shared may store it elsewhere)."
+fi
+
+echo "  ARP/neighbour table (clients the box has actually seen on $IFACE):"
+ip neigh show dev "$IFACE" 2>/dev/null | sed 's/^/    /' || true
+echo "    ^ expect your tablet's IP (10.42.0.x) in 'REACHABLE'/'STALE' state."
+
+echo "  Firewall INPUT policy + rules on $IFACE (is client->box :3000/:80 allowed?):"
+iptables -S INPUT 2>/dev/null | sed 's/^/    /' || true
+echo "  Firewall FORWARD policy (NM shared adds ACCEPT rules for the hotspot subnet):"
+iptables -S FORWARD 2>/dev/null | grep -iE "wlan0|10\.42|ACCEPT|DROP|policy" | sed 's/^/    /' || true
+echo "    ^ If INPUT policy is DROP with no ACCEPT for 10.42.0.0/24 -> client->box"
+echo "      traffic (incl. the app on :3000) is blocked. That = 'No Internet' on a raw IP."
+
+echo "  Can the box reach its OWN app via the hotspot IP (proves app serves on that bind)?"
+HS_IP=$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
+if [ -n "$HS_IP" ]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://$HS_IP:$APP_PORT/" 2>/dev/null)
+    echo "    http://$HS_IP:$APP_PORT/  -> HTTP ${code:-NO-RESPONSE}"
+    echo "    ^ If this is NO-RESPONSE, the app is bound to 127.0.0.1 only and NOT to"
+    echo "      $HS_IP — so clients can never reach it even though :3000 'is listening'."
+fi
+
 # --- 5. Optional live capture ------------------------------------------------
 if [ "$WATCH" = "yes" ]; then
     line "5. Live capture — join + browse from the tablet now (Ctrl-C to stop)"
