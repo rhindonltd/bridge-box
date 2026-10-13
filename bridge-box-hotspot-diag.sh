@@ -49,6 +49,18 @@ echo "  Radio / AP summary:"
 nmcli -f GENERAL.STATE,GENERAL.CONNECTION,WIFI-PROPERTIES.AP device show "$IFACE" 2>/dev/null | sed 's/^/    /' || true
 iw dev "$IFACE" info 2>/dev/null | sed 's/^/    /' || true
 
+echo "  AP band/mode/width (Fire tablets can reject some combinations):"
+# channel line already in `iw info`; also show the connection's band/mode knobs.
+nmcli -f 802-11-wireless.band,802-11-wireless.channel,802-11-wireless.mode,802-11-wireless.hidden \
+    connection show "$CONNECTION_NAME" 2>/dev/null | sed 's/^/    /' || true
+echo "    ^ For max compatibility want: band=bg (2.4GHz), a low channel (1/6/11),"
+echo "      mode=ap, hidden=no. 5GHz-only or a high/!DFS channel can exclude older"
+echo "      or region-locked clients like Fire tablets."
+echo "  Regulatory domain (a mismatched country can make a channel unusable to the client):"
+iw reg get 2>/dev/null | sed 's/^/    /' || true
+echo "    ^ 'country 00' (world/unset) is a common cause of odd client rejections —"
+echo "      set it to your country (see fix notes) so channels advertise correctly."
+
 # --- 2. PMF (802.11w) — failure mode A (can't associate) ---------------------
 line "2. PMF / 802.11w (Fire tablets fail to ASSOCIATE if this is on)"
 PMF=$(nmcli -g 802-11-wireless-security.pmf connection show "$CONNECTION_NAME" 2>/dev/null || echo "")
@@ -142,6 +154,23 @@ echo "  ARP/neighbour table (clients the box has actually seen on $IFACE):"
 ip neigh show dev "$IFACE" 2>/dev/null | sed 's/^/    /' || true
 echo "    ^ expect your tablet's IP (10.42.0.x) in 'REACHABLE'/'STALE' state."
 
+echo "  802.11 ASSOCIATED STATIONS (the link layer — does the device even join?):"
+echo "    (run this WHILE the tablet is trying to connect; compare phone vs tablet)"
+if command -v iw >/dev/null 2>&1; then
+    STATIONS=$(iw dev "$IFACE" station dump 2>/dev/null)
+    if [ -n "$STATIONS" ]; then
+        printf '%s\n' "$STATIONS" | grep -iE "^Station|signal:|rx bytes|tx bytes|connected time|authorized|authenticated" | sed 's/^/    /'
+        echo "    ^ Each 'Station <MAC>' is an associated client. If your phone's MAC"
+        echo "      appears but the Fire tablet's NEVER does, the tablet is failing to"
+        echo "      ASSOCIATE at the 802.11 layer (not a DHCP/IP/app problem at all)."
+        echo "      'authorized: yes' + 'authenticated: yes' = a healthy association."
+    else
+        warn "no stations associated right now (connect a device and re-run)."
+    fi
+else
+    warn "iw not installed (sudo apt-get install -y iw) — can't list stations."
+fi
+
 echo "  Firewall INPUT policy + rules on $IFACE (is client->box :3000/:80 allowed?):"
 iptables -S INPUT 2>/dev/null | sed 's/^/    /' || true
 echo "  Firewall FORWARD policy (NM shared adds ACCEPT rules for the hotspot subnet):"
@@ -158,18 +187,54 @@ if [ -n "$HS_IP" ]; then
     echo "      $HS_IP — so clients can never reach it even though :3000 'is listening'."
 fi
 
+# --- 4c. DHCP server health (does the hotspot actually LEASE addresses?) ------
+line "4c. Hotspot DHCP (NetworkManager-shared dnsmasq) — leasing to clients?"
+echo "  Is a shared-mode dnsmasq running for the hotspot?"
+if pgrep -af "dnsmasq.*$IFACE" >/dev/null 2>&1; then
+    pgrep -af "dnsmasq" | sed 's/^/    /'
+    ok "a dnsmasq process is running"
+    echo "  Its command line should include --dhcp-range (that's what leases IPs):"
+    if pgrep -af dnsmasq | grep -q -- "--dhcp-range"; then
+        pgrep -af dnsmasq | tr ' ' '\n' | grep -- "--dhcp-range" | sed 's/^/    /'
+        ok "dnsmasq has a DHCP range — it SHOULD be able to lease."
+    else
+        bad "dnsmasq is running but has NO --dhcp-range => it will NOT hand out IPs."
+        echo "       This is almost certainly why the tablet gets no lease."
+    fi
+else
+    bad "no shared dnsmasq process for $IFACE is running => no DHCP, no DNS for clients."
+    echo "       NM's 'shared' mode should spawn one when the hotspot is up."
+fi
+
+echo "  Recent NetworkManager/dnsmasq log lines (look for dnsmasq errors):"
+journalctl -u NetworkManager --no-pager -n 40 2>/dev/null \
+    | grep -iE "dnsmasq|dhcp|dns-manager|share" | tail -n 20 | sed 's/^/    /' \
+    || echo "    (none / journal unavailable)"
+
+echo "  dnsmasq-shared.d drop-ins (a bad directive here can stop dnsmasq starting):"
+ls -la /etc/NetworkManager/dnsmasq-shared.d/ 2>/dev/null | sed 's/^/    /' || true
+echo "    ^ The captive drop-in adds 'no-resolv' + 'address=/#/<ip>'. If removing it"
+echo "      makes DHCP work, the drop-in is the culprit (see note after the run)."
+
 # --- 5. Optional live capture ------------------------------------------------
 if [ "$WATCH" = "yes" ]; then
     line "5. Live capture — join + browse from the tablet now (Ctrl-C to stop)"
     if ! command -v tcpdump >/dev/null 2>&1; then
         bad "tcpdump not installed (sudo apt-get install -y tcpdump) — skipping."
     else
-        echo "  Watching HTTP/DNS on $IFACE. You'll see the EXACT probe host/path the"
-        echo "  Fire tablet uses and whether it even reaches us. Ctrl-C when done."
+        echo "  Watching DHCP + DNS + HTTP on $IFACE. 'Forget' the network on the"
+        echo "  tablet and re-join so we see the full sequence: does it DHCP (get an"
+        echo "  IP), what probe does it send, and does it then drop? Ctrl-C when done."
         echo
-        timeout 300 tcpdump -i "$IFACE" -n -s0 -A \
-            '(tcp port 80) or (udp port 53)' 2>/dev/null \
-            | grep -iE 'GET |Host: |generate_204|gen_204|hotspot-detect|connecttest|ncsi|captive|kindle|fireos' \
+        echo "  Reading the capture:"
+        echo "    * BOOTP/DHCP Request+ACK  = the tablet GOT an IP (DHCP is fine)."
+        echo "    * no DHCP ACK             = it never leased (device-side refusal)."
+        echo "    * a GET to a probe host then silence = it decided 'no internet' + bailed."
+        echo
+        # Show DHCP (67/68), DNS (53) and HTTP (80) so we can see lease + probe + drop.
+        timeout 300 tcpdump -i "$IFACE" -n -s0 \
+            '(udp port 67 or udp port 68) or (udp port 53) or (tcp port 80)' 2>/dev/null \
+            | grep -iE 'BOOTP|DHCP|Request from|ACK|\.53:|GET |generate_204|gen_204|hotspot-detect|connecttest|ncsi|captive|kindle|fireos|google' \
             || true
     fi
 else
