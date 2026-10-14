@@ -42,7 +42,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 
 # Install Node.js from the NodeSource apt repo, pinned to a major line.
 # NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
-# major (e.g. 24.x.y). Crossing to a new major is a deliberate step — see
+# major (e.g. 26.x.y). Crossing to a new major is a deliberate step — see
 # bridge-box-node-upgrade.sh. Override the default by exporting NODE_MAJOR.
 # Locale for the scorer app. Controls NEXT_PUBLIC_BRIDGE_LOCALE, which the app
 # uses for locale-specific logic. Baked into the build (a NEXT_PUBLIC_ var), so
@@ -132,7 +132,7 @@ LOG_UNITS="bridge-box-app.service"
 EOF
 fi
 
-NODE_MAJOR="${NODE_MAJOR:-24}"
+NODE_MAJOR="${NODE_MAJOR:-26}"
 echo "Installing Node.js ${NODE_MAJOR}.x (LTS)..."
 curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs

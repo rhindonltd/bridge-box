@@ -296,8 +296,8 @@ from boot, and if not the script brings it up from `wifi.json`. The hotspot (the
 up throughout. (It needs a valid `wifi.json` — see Step 6 — or an Ethernet cable.)
 
 **Node.js version.** Node is installed from the NodeSource repository, pinned to a major version
-(24 by default). Routine OS updates keep it patched *within* that major but never jump to a new one
-(e.g. they won't move you from 24 to 25). When you do want to move to a newer major — after the app
+(26 by default). Routine OS updates keep it patched *within* that major but never jump to a new one
+(e.g. they won't move you from 26 to 27). When you do want to move to a newer major — after the app
 has been confirmed to support it — do it deliberately:
 
 ```bash
@@ -507,7 +507,7 @@ bridge logs          # follow the app logs (Ctrl-C to stop)
 bridge restart       # restart the app
 bridge update-now    # check for an app update now (goes live next switch-on)
 bridge os-update     # apply OS security updates (uses the USB radio for internet)
-bridge node-upgrade 24   # move Node.js to a new major version
+bridge node-upgrade 26   # move Node.js to a new major version
 bridge backup-now    # take a local data backup now
 bridge cloud-backup-now  # upload a cloud snapshot now (if configured + entitled)
 bridge cloud-restore # restore data from the latest cloud snapshot (add --force to overwrite)
