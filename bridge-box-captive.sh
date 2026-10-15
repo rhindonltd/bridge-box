@@ -17,7 +17,13 @@
 
 set -euo pipefail
 
-IFACE="${IFACE:-wlan0}"
+# AP (hotspot) interface. An explicit IFACE= from the caller (bridge-box-root.sh
+# passes the resolved AP_IFACE) wins; otherwise read the role from the box-local
+# interfaces.conf so a standalone run (manual, or an AP_IFACE override) still
+# targets the right radio instead of assuming wlan0. Never the client radio.
+AP_IFACE="wlan0"
+[ -f /home/bridgebox/interfaces.conf ] && . /home/bridgebox/interfaces.conf
+IFACE="${IFACE:-$AP_IFACE}"
 HOTSPOT_CONNECTION="${HOTSPOT_CONNECTION:-bridge-hotspot}"
 # NetworkManager's shared mode assigns this by default (confirmed on our
 # hardware). Used only as a fallback if the live interface lookup is empty.
