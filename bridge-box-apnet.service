@@ -5,6 +5,10 @@ Description=BridgeBox AP network (static IP + DHCP + captive DNS on the AP radio
 # serving DHCP/DNS; a restart of this unit re-asserts the IP + dnsmasq.
 After=bridge-box-hostapd.service bridge-box-root.service
 Wants=bridge-box-hostapd.service
+# Same restart-rate guard as hostapd: fail-and-stop rather than thrash if the
+# AP interface isn't ready, so a first-boot race can't wedge the box.
+StartLimitIntervalSec=60
+StartLimitBurst=4
 
 [Service]
 Type=simple

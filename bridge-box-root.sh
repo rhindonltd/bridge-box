@@ -78,11 +78,18 @@ if nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$CONNECTION_NAME"; 
     nmcli connection down "$CONNECTION_NAME" 2>/dev/null || true
     nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
 fi
+# Reload NM config if we just wrote the drop-in. But regardless, ALWAYS assert
+# that NM has released the AP interface before hostapd starts — this closes a
+# first-boot race: right after provisioning the drop-in already exists (so
+# NEED_NM_RELOAD is 0), yet NM may still be attached to the radio on that first
+# reboot. Unconditionally disconnecting + marking unmanaged here means hostapd
+# never races NetworkManager for the radio. All non-fatal.
 if [ "$NEED_NM_RELOAD" = "1" ]; then
     nmcli connection reload 2>/dev/null || true
-    nmcli device set "$IFACE" managed no 2>/dev/null || true
-    sleep 2
 fi
+nmcli device set "$IFACE" managed no 2>/dev/null || true
+nmcli device disconnect "$IFACE" 2>/dev/null || true
+sleep 2
 
 # Enable IP forwarding (NM's shared mode used to do this; we do it ourselves).
 sysctl -w net.ipv4.ip_forward=1
