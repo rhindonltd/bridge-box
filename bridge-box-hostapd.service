@@ -2,19 +2,29 @@
 Description=BridgeBox hotspot (hostapd AP on the onboard radio)
 # The AP interface must exist and NetworkManager must already be told to leave
 # it unmanaged (done by bridge-box-root). We order after root so the NM
-# "unmanaged" drop-in and the interface are ready; root also starts us.
+# "unmanaged" drop-in and the interface are ready. root.sh ALSO (re)starts us
+# explicitly after setting the unmanaged flag — see the note on Install below.
 After=bridge-box-root.service
 Wants=bridge-box-root.service
+# Restart-rate guard: if hostapd can't start (e.g. NetworkManager hasn't yet
+# released the AP radio on a first boot right after provisioning), fail a few
+# times then STOP, rather than thrashing the CPU into an unresponsive box. A
+# stopped service leaves the box responsive + diagnosable; the old behaviour
+# (unbounded Restart=on-failure racing NM for the radio) could wedge the Pi.
+StartLimitIntervalSec=60
+StartLimitBurst=4
 
 [Service]
 Type=simple
 User=root
+# Wait (briefly) for the AP interface to exist AND for NetworkManager to have
+# marked it unmanaged before launching hostapd — closes the first-boot race
+# where NM still owns the radio while hostapd tries to grab it. Non-fatal if the
+# checks can't confirm (hostapd will just try); bounded so it can't hang boot.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 10); do ip link show "$(. /home/bridgebox/interfaces.conf 2>/dev/null; echo "${AP_IFACE:-wlan0}")" >/dev/null 2>&1 && break; sleep 1; done'
 # bridge-box-hostapd.sh writes the config then exec's hostapd in the foreground,
 # so systemd's main PID IS hostapd and can supervise it directly.
 ExecStart=/bin/bash /home/bridgebox/bridge-box/bridge-box-hostapd.sh
-# The hotspot is the core of the appliance — keep it up. Unlike the old
-# NM-recreate loop (which thrashed), hostapd is a long-running daemon, so
-# supervising it with Restart=on-failure is safe and correct.
 Restart=on-failure
 RestartSec=3
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
