@@ -37,8 +37,38 @@ echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo deb
 # awscli: used by the optional cloud backup/restore feature (off by default).
 # It's a small apt package and harmless on a box that never enables cloud
 # backup, so we install it unconditionally to keep provisioning simple.
+#
+# hostapd + dnsmasq: the guest hotspot is run by hostapd (NOT NetworkManager's
+# built-in hotspot), because NM's AP beacon advertises 802.11n/WMM elements that
+# some budget clients — notably Amazon Fire tablets — refuse to associate with. A
+# stripped-down hostapd beacon fixes that. We also run our OWN dnsmasq instance
+# (DHCP + captive DNS) on the AP interface, replacing what NM's "shared" mode
+# used to provide. See bridge-box-hostapd.sh / bridge-box-apnet.sh.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git curl avahi-daemon iptables iptables-persistent jq sqlite3 awscli
+  git curl avahi-daemon iptables iptables-persistent jq sqlite3 awscli \
+  hostapd dnsmasq
+
+# We run hostapd + dnsmasq as OUR OWN systemd services with explicit configs
+# (bridge-box-hostapd.service / bridge-box-apnet.service), bound to the AP radio.
+# The distro's stock hostapd/dnsmasq services must therefore stay OFF so they
+# can't race us or grab the interface:
+#   - hostapd ships masked on Debian; unmask is not needed since we use our own
+#     unit, but we disable+mask the stock unit defensively.
+#   - dnsmasq's stock service would bind all interfaces and conflict with both
+#     our AP dnsmasq AND NetworkManager — mask it.
+# NetworkManager keeps using its internal dnsmasq-base for the CLIENT radio; that
+# is unaffected (it's not the stock dnsmasq.service).
+sudo systemctl disable --now hostapd 2>/dev/null || true
+sudo systemctl mask hostapd 2>/dev/null || true
+sudo systemctl disable --now dnsmasq 2>/dev/null || true
+sudo systemctl mask dnsmasq 2>/dev/null || true
+
+# Migration: older releases ran the hotspot via NetworkManager "shared" mode and
+# hijacked DNS with an NM shared-dnsmasq drop-in. That path is retired — the
+# captive DNS hijack now lives in our own dnsmasq (bridge-box-apnet.sh). Remove
+# the stale drop-in so a box upgrading from an older release doesn't keep a dead
+# file around (harmless, but tidy, and avoids confusion in diagnostics).
+sudo rm -f /etc/NetworkManager/dnsmasq-shared.d/010-bridgebox-captive.conf 2>/dev/null || true
 
 # Install Node.js from the NodeSource apt repo, pinned to a major line.
 # NODE_MAJOR controls which line; a plain `apt upgrade` only moves within this
@@ -297,6 +327,9 @@ echo "Installing systemd service files..."
 sudo cp "$BOX_DIR/bridge-box-root.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-app.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-online-tasks.service" /etc/systemd/system/
+# Hotspot via hostapd (+ its DHCP/DNS) — the AP services started by root.sh.
+sudo cp "$BOX_DIR/bridge-box-hostapd.service" /etc/systemd/system/
+sudo cp "$BOX_DIR/bridge-box-apnet.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-build.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.service" /etc/systemd/system/
 sudo cp "$BOX_DIR/bridge-box-healthcheck.timer" /etc/systemd/system/
@@ -336,6 +369,9 @@ sudo systemctl daemon-reload
 # bridge-box-online-tasks and build fire at boot via their ordering;
 # player-sync.service has no timer (manual/boot only).
 sudo systemctl enable bridge-box-root bridge-box-online-tasks bridge-box-build bridge-box-app
+# AP services: hostapd (beacon) + apnet (IP/DHCP/captive DNS). Enabled so they
+# come up at boot (ordered After=bridge-box-root); root.sh also (re)starts them.
+sudo systemctl enable bridge-box-hostapd bridge-box-apnet
 sudo systemctl enable bridge-box-healthcheck.timer bridge-box-backup.timer bridge-box-cloud-sync.timer
 # Watch wifi.json and re-apply the client link on change (no reboot needed).
 sudo systemctl enable bridge-box-wifi-apply.path

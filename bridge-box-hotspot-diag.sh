@@ -15,7 +15,6 @@
 set -uo pipefail
 
 INSTALL_DIR="/home/bridgebox"
-CONNECTION_NAME="bridge-hotspot"
 APP_PORT="3000"
 
 # Resolve the AP interface the same way the real scripts do.
@@ -33,54 +32,60 @@ warn() { printf '  [WARN] %s\n' "$1"; }
 bad()  { printf '  [BAD ] %s\n' "$1"; }
 
 line "0. Context"
-echo "  AP (hotspot) interface: $IFACE"
-echo "  Hotspot connection:     $CONNECTION_NAME"
+echo "  AP (hotspot) interface: $IFACE  (run by hostapd, not NetworkManager)"
 echo "  Date:                   $(date -Is 2>/dev/null || date)"
 
-# --- 1. Is the hotspot actually up? ------------------------------------------
-line "1. Hotspot connection state"
-if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
-    ok "$CONNECTION_NAME is active"
+# --- 1. Is the hotspot (hostapd) actually up? --------------------------------
+# The hotspot is run by hostapd (bridge-box-hostapd.service), NOT NetworkManager.
+line "1. Hotspot (hostapd) state"
+if systemctl is-active --quiet bridge-box-hostapd.service; then
+    ok "bridge-box-hostapd.service is active"
 else
-    bad "$CONNECTION_NAME is NOT active — clients can't see/join it at all."
-    echo "       Try: sudo systemctl restart bridge-box-root ; then re-run this."
+    bad "bridge-box-hostapd.service is NOT active — no hotspot. clients can't join."
+    echo "       Check: journalctl -u bridge-box-hostapd -b ; then: sudo systemctl restart bridge-box-root"
 fi
-echo "  Radio / AP summary:"
-nmcli -f GENERAL.STATE,GENERAL.CONNECTION,WIFI-PROPERTIES.AP device show "$IFACE" 2>/dev/null | sed 's/^/    /' || true
+if systemctl is-active --quiet bridge-box-apnet.service; then
+    ok "bridge-box-apnet.service is active (AP IP + DHCP + captive DNS)"
+else
+    bad "bridge-box-apnet.service is NOT active — clients would associate but get no IP."
+    echo "       Check: journalctl -u bridge-box-apnet -b"
+fi
+echo "  Radio / AP summary (expect 'type AP'):"
 iw dev "$IFACE" info 2>/dev/null | sed 's/^/    /' || true
 
-echo "  AP band/mode/width (Fire tablets can reject some combinations):"
-# channel line already in `iw info`; also show the connection's band/mode knobs.
-nmcli -f 802-11-wireless.band,802-11-wireless.channel,802-11-wireless.mode,802-11-wireless.hidden \
-    connection show "$CONNECTION_NAME" 2>/dev/null | sed 's/^/    /' || true
-echo "    ^ For max compatibility want: band=bg (2.4GHz), a low channel (1/6/11),"
-echo "      mode=ap, hidden=no. 5GHz-only or a high/!DFS channel can exclude older"
-echo "      or region-locked clients like Fire tablets."
-echo "  Regulatory domain (a mismatched country can make a channel unusable to the client):"
+echo "  hostapd beacon params (Fire-tablet-critical — expect HT/WMM/PMF OFF):"
+if [ -f /etc/hostapd/bridge-box.conf ]; then
+    grep -E '^(ssid|hw_mode|channel|ieee80211n|wmm_enabled|ieee80211w|wpa|rsn_pairwise)=' \
+        /etc/hostapd/bridge-box.conf | sed 's/^/    /'
+    echo "    ^ Want: hw_mode=g, ieee80211n=0, wmm_enabled=0, ieee80211w=0, wpa=2, rsn_pairwise=CCMP."
+    echo "      These are what let Amazon Fire tablets associate; NM's beacon (HT+WMM) did not."
+else
+    warn "no /etc/hostapd/bridge-box.conf — hostapd config not generated yet."
+fi
+echo "  Regulatory domain (informational — self-managed brcmfmac shows phy 'country 99', which is normal):"
 iw reg get 2>/dev/null | sed 's/^/    /' || true
-echo "    ^ 'country 00' (world/unset) is a common cause of odd client rejections —"
-echo "      set it to your country (see fix notes) so channels advertise correctly."
 
-# --- 2. PMF (802.11w) — failure mode A (can't associate) ---------------------
-line "2. PMF / 802.11w (Fire tablets fail to ASSOCIATE if this is on)"
-PMF=$(nmcli -g 802-11-wireless-security.pmf connection show "$CONNECTION_NAME" 2>/dev/null || echo "")
-case "$PMF" in
-    1|disable) ok "PMF is disabled (pmf=$PMF) — correct for Fire tablets." ;;
-    "")        warn "Could not read pmf (connection missing?). Expected 1 (disable)." ;;
-    *)         bad "PMF is '$PMF' (expected 1/disable). This blocks Fire tablets from associating."
-               echo "       Fix: sudo systemctl restart bridge-box-root  (re-applies pmf=disable)" ;;
-esac
-echo "  Key mgmt / proto (WPA2 vs WPA3 also matters for old clients):"
-nmcli -f 802-11-wireless-security.key-mgmt,802-11-wireless-security.proto,802-11-wireless-security.pairwise,802-11-wireless-security.group \
-    connection show "$CONNECTION_NAME" 2>/dev/null | sed 's/^/    /' || true
-
+# --- 2. (legacy section retained as a no-op note) ----------------------------
+line "2. PMF / 802.11w"
+if [ -f /etc/hostapd/bridge-box.conf ] && grep -q '^ieee80211w=0' /etc/hostapd/bridge-box.conf; then
+    ok "PMF disabled in hostapd (ieee80211w=0) — correct for Fire tablets."
+else
+    warn "could not confirm ieee80211w=0 in the hostapd config."
+fi
 # --- 3. DNS hijack + NAT — the captive path (failure mode B) -----------------
 line "3. Captive portal plumbing (DNS hijack + NAT 80/443 -> app)"
-DROPIN="/etc/NetworkManager/dnsmasq-shared.d/010-bridgebox-captive.conf"
-if [ -f "$DROPIN" ]; then
-    ok "DNS hijack drop-in present:"; sed 's/^/      /' "$DROPIN"
+# The captive DNS hijack now lives in our own dnsmasq config (bridge-box-apnet.sh),
+# NOT an NM shared-dnsmasq drop-in.
+APDNS="/etc/bridgebox/ap-dnsmasq.conf"
+if [ -f "$APDNS" ]; then
+    if grep -q '^address=/#/' "$APDNS"; then
+        ok "captive DNS hijack present in AP dnsmasq config:"; grep -E '^(interface|dhcp-range|address)=' "$APDNS" | sed 's/^/      /'
+    else
+        warn "AP dnsmasq config present but no captive hijack (CAPTIVE_PORTAL=no?). DHCP still works."
+        grep -E '^(interface|dhcp-range)=' "$APDNS" | sed 's/^/      /'
+    fi
 else
-    warn "No captive DNS drop-in ($DROPIN). Captive portal may be disabled (captive.conf)."
+    bad "No AP dnsmasq config ($APDNS) — clients won't get an IP. Check bridge-box-apnet.service."
 fi
 echo "  NAT PREROUTING redirects (expect 80 and 443 -> $APP_PORT on $IFACE):"
 if iptables -t nat -S PREROUTING 2>/dev/null | grep -E "dport (80|443)" | sed 's/^/    /'; then :; else
@@ -130,24 +135,23 @@ line "4b. Client connectivity (DHCP lease + can the box's app be reached on :80)
 echo "  Box address on $IFACE:"
 ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print "    " $4}' || true
 
-echo "  DHCP leases handed out by the hotspot's shared dnsmasq:"
-# NetworkManager 'shared' runs a dnsmasq whose leases live in one of these.
+echo "  DHCP leases handed out by the AP dnsmasq (bridge-box-apnet):"
+# Our dnsmasq uses the default lease file; NM-era boxes used a per-iface one.
 LEASES=""
-for f in /var/lib/NetworkManager/dnsmasq-"$IFACE".leases \
-         /var/lib/misc/dnsmasq.leases \
+for f in /var/lib/misc/dnsmasq.leases \
+         /var/lib/NetworkManager/dnsmasq-"$IFACE".leases \
          /var/lib/NetworkManager/dnsmasq-*.leases; do
     [ -f "$f" ] && LEASES="$f" && break
 done
 if [ -n "$LEASES" ]; then
     if [ -s "$LEASES" ]; then
         sed 's/^/    /' "$LEASES"
-        echo "    ^ if your tablet's MAC/IP is here, DHCP is working."
+        echo "    ^ if your tablet's MAC/IP is here, DHCP is working ($LEASES)."
     else
-        bad "lease file $LEASES is EMPTY — no client has been given an IP."
-        echo "       A device that associates but gets no lease shows 'No Internet' on a raw IP."
+        warn "lease file $LEASES is EMPTY — no client leased yet (normal if nothing's connected)."
     fi
 else
-    warn "no dnsmasq lease file found — can't confirm DHCP (NM shared may store it elsewhere)."
+    warn "no dnsmasq lease file found yet — connect a client and re-run."
 fi
 
 echo "  ARP/neighbour table (clients the box has actually seen on $IFACE):"
@@ -173,7 +177,7 @@ fi
 
 echo "  Firewall INPUT policy + rules on $IFACE (is client->box :3000/:80 allowed?):"
 iptables -S INPUT 2>/dev/null | sed 's/^/    /' || true
-echo "  Firewall FORWARD policy (NM shared adds ACCEPT rules for the hotspot subnet):"
+echo "  Firewall FORWARD policy (should ACCEPT; NAT handles guest->app redirect):"
 iptables -S FORWARD 2>/dev/null | grep -iE "wlan0|10\.42|ACCEPT|DROP|policy" | sed 's/^/    /' || true
 echo "    ^ If INPUT policy is DROP with no ACCEPT for 10.42.0.0/24 -> client->box"
 echo "      traffic (incl. the app on :3000) is blocked. That = 'No Internet' on a raw IP."
@@ -187,34 +191,24 @@ if [ -n "$HS_IP" ]; then
     echo "      $HS_IP — so clients can never reach it even though :3000 'is listening'."
 fi
 
-# --- 4c. DHCP server health (does the hotspot actually LEASE addresses?) ------
-line "4c. Hotspot DHCP (NetworkManager-shared dnsmasq) — leasing to clients?"
-echo "  Is a shared-mode dnsmasq running for the hotspot?"
-if pgrep -af "dnsmasq.*$IFACE" >/dev/null 2>&1; then
-    pgrep -af "dnsmasq" | sed 's/^/    /'
-    ok "a dnsmasq process is running"
-    echo "  Its command line should include --dhcp-range (that's what leases IPs):"
-    if pgrep -af dnsmasq | grep -q -- "--dhcp-range"; then
-        pgrep -af dnsmasq | tr ' ' '\n' | grep -- "--dhcp-range" | sed 's/^/    /'
-        ok "dnsmasq has a DHCP range — it SHOULD be able to lease."
-    else
-        bad "dnsmasq is running but has NO --dhcp-range => it will NOT hand out IPs."
-        echo "       This is almost certainly why the tablet gets no lease."
-    fi
+# --- 4c. DHCP server health (our dnsmasq via bridge-box-apnet) ----------------
+line "4c. Hotspot DHCP (bridge-box-apnet dnsmasq) — leasing to clients?"
+if systemctl is-active --quiet bridge-box-apnet.service; then
+    ok "bridge-box-apnet.service is active"
 else
-    bad "no shared dnsmasq process for $IFACE is running => no DHCP, no DNS for clients."
-    echo "       NM's 'shared' mode should spawn one when the hotspot is up."
+    bad "bridge-box-apnet.service is NOT active => no DHCP/DNS for clients."
+    echo "       Check: journalctl -u bridge-box-apnet -b"
 fi
-
-echo "  Recent NetworkManager/dnsmasq log lines (look for dnsmasq errors):"
-journalctl -u NetworkManager --no-pager -n 40 2>/dev/null \
-    | grep -iE "dnsmasq|dhcp|dns-manager|share" | tail -n 20 | sed 's/^/    /' \
+echo "  Our dnsmasq process (should be bound to $IFACE with a --dhcp-range):"
+if pgrep -af "dnsmasq.*ap-dnsmasq.conf" >/dev/null 2>&1; then
+    pgrep -af "dnsmasq.*ap-dnsmasq.conf" | sed 's/^/    /'
+    ok "the AP dnsmasq is running"
+else
+    bad "no AP dnsmasq (ap-dnsmasq.conf) process running => clients get no IP."
+fi
+echo "  Recent bridge-box-apnet log lines:"
+journalctl -u bridge-box-apnet --no-pager -n 20 2>/dev/null | tail -n 15 | sed 's/^/    /' \
     || echo "    (none / journal unavailable)"
-
-echo "  dnsmasq-shared.d drop-ins (a bad directive here can stop dnsmasq starting):"
-ls -la /etc/NetworkManager/dnsmasq-shared.d/ 2>/dev/null | sed 's/^/    /' || true
-echo "    ^ The captive drop-in adds 'no-resolv' + 'address=/#/<ip>'. If removing it"
-echo "      makes DHCP work, the drop-in is the culprit (see note after the run)."
 
 # --- 5. Optional live capture ------------------------------------------------
 if [ "$WATCH" = "yes" ]; then

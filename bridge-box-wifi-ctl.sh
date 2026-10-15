@@ -34,7 +34,6 @@ IFACE="${BB_IFACE:-$CLIENT_IFACE}"
 
 INSTALL_DIR="/home/bridgebox"
 WIFI_CONFIG="$INSTALL_DIR/wifi.json"
-HOTSPOT_CONNECTION="${BB_HOTSPOT_CONNECTION:-bridge-hotspot}"
 NMCLI_TIMEOUT="${BB_NMCLI_TIMEOUT:-45}"
 # Dedicated throwaway profile for app-driven credential testing. NEVER touch
 # the real hotspot or client profiles from the test verbs.
@@ -86,17 +85,19 @@ connect_client() {
     fi
 }
 
-# Ensure the hotspot is up. In the dual-radio model it should never be down, so
-# this is just a safety re-assert (idempotent). Kept for the lib compat shim and
-# the `hotspot` verb; it does NOT touch the client radio.
+# Ensure the hotspot is up. The hotspot is now run by hostapd (bridge-box-hostapd
+# service), NOT a NetworkManager connection, so a safety re-assert just makes sure
+# that service (and its DHCP/DNS companion) is active. Idempotent; does NOT touch
+# the client radio.
 ensure_hotspot_up() {
-    if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$HOTSPOT_CONNECTION:activated"; then
+    if systemctl is-active --quiet bridge-box-hostapd.service; then
         return 0
     fi
-    timeout "$NMCLI_TIMEOUT" nmcli connection up "$HOTSPOT_CONNECTION" 2>/dev/null || {
-        echo "wifi-ctl: WARNING hotspot '$HOTSPOT_CONNECTION' not active and could not be brought up"
+    systemctl restart bridge-box-hostapd.service 2>/dev/null || {
+        echo "wifi-ctl: WARNING hostapd hotspot not active and could not be brought up"
         return 1
     }
+    systemctl restart bridge-box-apnet.service 2>/dev/null || true
 }
 
 do_scan() {

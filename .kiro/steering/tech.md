@@ -12,7 +12,8 @@
 - **JSON** — config (`wifi.json`, etc.).
 
 ## System tooling relied on
-- `nmcli` (NetworkManager) for the WiFi hotspot (AP radio) and client connections (client radio) — the two radios operate independently.
+- `hostapd` runs the WiFi **hotspot** (AP radio), with a stripped-down beacon (no 802.11n HT, no WMM, no PMF, plain WPA2-PSK/CCMP) — NetworkManager's built-in hotspot was replaced because its beacon stopped Amazon Fire tablets associating. A dedicated `dnsmasq` instance (bound to the AP interface) provides the hotspot's DHCP + captive DNS.
+- `nmcli` (NetworkManager) still manages the **client** connection (client radio, `wifi.json`); it is told to leave the AP radio unmanaged so hostapd owns it. The two radios operate independently.
 - `iptables` / `iptables-persistent` / `netfilter-persistent` for NAT and port redirects.
 - `avahi-daemon` for mDNS (`bridge.local`).
 - `jq` for parsing `wifi.json`.

@@ -1,0 +1,22 @@
+[Unit]
+Description=BridgeBox AP network (static IP + DHCP + captive DNS on the AP radio)
+# Needs the AP interface up as an AP, which hostapd provides — so order after
+# hostapd. If hostapd restarts, this is bound to the same interface and keeps
+# serving DHCP/DNS; a restart of this unit re-asserts the IP + dnsmasq.
+After=bridge-box-hostapd.service bridge-box-root.service
+Wants=bridge-box-hostapd.service
+
+[Service]
+Type=simple
+User=root
+# bridge-box-apnet.sh assigns 10.42.0.1/24 to the AP interface then exec's
+# dnsmasq in the foreground (DHCP + captive DNS), so systemd supervises dnsmasq.
+ExecStart=/bin/bash /home/bridgebox/bridge-box/bridge-box-apnet.sh
+Restart=on-failure
+RestartSec=3
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[Unit]
+Description=BridgeBox hotspot (hostapd AP on the onboard radio)
+# The AP interface must exist and NetworkManager must already be told to leave
+# it unmanaged (done by bridge-box-root). We order after root so the NM
+# "unmanaged" drop-in and the interface are ready; root also starts us.
+After=bridge-box-root.service
+Wants=bridge-box-root.service
+
+[Service]
+Type=simple
+User=root
+# bridge-box-hostapd.sh writes the config then exec's hostapd in the foreground,
+# so systemd's main PID IS hostapd and can supervise it directly.
+ExecStart=/bin/bash /home/bridgebox/bridge-box/bridge-box-hostapd.sh
+# The hotspot is the core of the appliance — keep it up. Unlike the old
+# NM-recreate loop (which thrashed), hostapd is a long-running daemon, so
+# supervising it with Restart=on-failure is safe and correct.
+Restart=on-failure
+RestartSec=3
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
