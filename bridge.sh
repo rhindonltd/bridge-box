@@ -37,6 +37,16 @@ case "$cmd" in
     sudo systemctl restart "$APP_UNIT"
     ;;
 
+  hotspot-restart)
+    # Restart the guest hotspot (hostapd) + its DHCP/DNS (apnet). Use after
+    # changing hotspot.conf (password/channel) or if the hotspot misbehaves.
+    # The client radio / internet link is untouched.
+    echo "Restarting the hotspot (hostapd + AP network)..."
+    sudo systemctl restart bridge-box-hostapd.service
+    sudo systemctl restart bridge-box-apnet.service
+    echo "Done. Check: sudo bash $BOX_DIR/bridge-box-hotspot-diag.sh"
+    ;;
+
   update-now)
     echo "Checking for an app update now (downloads + installs deps)."
     # The client radio is a separate adapter, so this does NOT drop the hotspot
@@ -220,6 +230,7 @@ BridgeBox admin — usage: bridge <command>
   status        Show app service status and health check
   logs          Follow the app logs (Ctrl-C to stop)
   restart       Restart the app
+  hotspot-restart Restart the guest hotspot (hostapd) — after changing hotspot.conf
   update-now    Check for an app update now (activates on next switch-on)
   os-update     Apply OS security updates (uses the client radio for internet)
   node-upgrade  Upgrade Node.js to a new major, e.g. bridge node-upgrade 24

@@ -128,7 +128,8 @@ sudo reboot
 ```
 
 On reboot the device runs its startup automatically:
-- `bridge-box-root` (as root) brings up the hotspot on the built-in radio, the firewall/NAT, and
+- `bridge-box-root` (as root) sets up the hotspot on the built-in radio (via **hostapd** +
+  `bridge-box-hostapd`/`bridge-box-apnet`, not NetworkManager), the firewall/NAT, and
   sets the hostname to `bridge`. If `wifi.json` is present, it also connects the **USB radio** to
   your WiFi and leaves it connected — so the box is online **and** hotspotting at the same time.
 - `bridge-box-online-tasks` (as `bridgebox`) does the network chores (only if `wifi.json` is
@@ -487,7 +488,9 @@ sudo apt-get -f install
 **Services and timers**
 | Unit | Runs as | Purpose |
 |---|---|---|
-| `bridge-box-root.service` | root | Hotspot, firewall/NAT, hostname (at boot) |
+| `bridge-box-root.service` | root | Boot setup: marks AP radio unmanaged, starts the hotspot services, firewall/NAT, hostname, client link |
+| `bridge-box-hostapd.service` | root | The guest hotspot (hostapd) on the AP radio — Fire-tablet-compatible beacon |
+| `bridge-box-apnet.service` | root | AP IP + DHCP + captive DNS (dedicated dnsmasq on the AP radio) |
 | `bridge-box-app.service` | bridgebox | Runs the scoring app (auto-restarts if it stops) |
 | `bridge-box-online-tasks.service` | bridgebox | Boot: activate pending update, download a new one, refresh player + movement lists (over the USB radio; hotspot untouched) |
 | `bridge-box-build.service` | bridgebox | Boot (background, low priority): build a downloaded update |
@@ -505,6 +508,7 @@ ones:
 bridge status        # is the app running? (service status + health check)
 bridge logs          # follow the app logs (Ctrl-C to stop)
 bridge restart       # restart the app
+bridge hotspot-restart  # restart the guest hotspot (after changing hotspot.conf)
 bridge update-now    # check for an app update now (goes live next switch-on)
 bridge os-update     # apply OS security updates (uses the USB radio for internet)
 bridge node-upgrade 26   # move Node.js to a new major version
@@ -534,13 +538,15 @@ bridge-box-online-tasks -b`).
 - *Page won't load but hotspot works:* check `bridge logs` (or `systemctl status bridge-box-app`) and `curl .../healthz` on the Pi.
 - *Update never happens:* verify `wifi.json` is valid JSON with a reachable network; the box only
   updates when it actually gets internet.
-- *App doesn't appear automatically (have to type `bridge.local`):* the captive portal may have
-  failed to configure. Check `sudo journalctl -u bridge-box-root -b` for a captive-portal warning,
-  and confirm the drop-in exists: `ls /etc/NetworkManager/dnsmasq-shared.d/`. Typing `bridge.local`
-  always works as a fallback.
-- *A tablet or phone won't join the hotspot (esp. Amazon Fire tablets):* the box disables PMF
-  (802.11w) on the hotspot specifically because some budget devices can't associate otherwise, so
-  most such cases are already handled. If a device still won't join after a reboot, confirm PMF is
-  off: `nmcli -g 802-11-wireless-security.pmf connection show bridge-hotspot` should print `1`
-  (disable). If it shows something else, `sudo systemctl restart bridge-box-root` re-applies it. (A
-  box provisioned before this change picks it up automatically on its next boot.)
+- *App doesn't appear automatically (have to type `http://10.42.0.1`):* the captive DNS hijack may
+  not be running. Check `sudo journalctl -u bridge-box-apnet -b` and confirm the AP dnsmasq config
+  has the hijack: `grep address= /etc/bridgebox/ap-dnsmasq.conf` (expect `address=/#/10.42.0.1`).
+  `sudo bridge hotspot-restart` re-applies it. On older/budget devices (e.g. Fire tablets) `.local`
+  names don't resolve; `http://10.42.0.1` always works as a fallback.
+- *A tablet or phone won't join the hotspot (esp. Amazon Fire tablets):* the hotspot is run by
+  **hostapd** with a deliberately stripped-down beacon (no 802.11n/WMM/PMF), precisely because
+  NetworkManager's richer beacon stops some budget devices — notably **Amazon Fire tablets** — from
+  associating. If a device won't join: confirm the hotspot is up with
+  `sudo bash /home/bridgebox/bridge-box/bridge-box-hotspot-diag.sh` (section 1 shows hostapd active
+  and the Fire-critical beacon params), then `sudo bridge hotspot-restart`. Note very old budget
+  tablets (e.g. the 2019 Fire 7) can still be marginal; a 2020-or-newer tablet is recommended.

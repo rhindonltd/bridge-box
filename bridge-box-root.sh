@@ -45,89 +45,69 @@ echo "Interfaces: AP=$AP_IFACE (hotspot), client=$CLIENT_IFACE (internet)"
 nmcli networking connectivity check >/dev/null 2>&1 || true
 sleep 3
 
-# Hotspot setup
-MAC=$(cat /sys/class/net/$IFACE/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
-HOTSPOT_SSID="BridgeBox-$MAC"
-
-# Hotspot password: a known, posted credential so any player in the room can
-# join quickly (read it off a card/sign on the table). Default is "bridgebox";
-# a club can override it by putting HOTSPOT_PASS="..." in
-# /home/bridgebox/hotspot.conf. The effective SSID + password are written to
-# hotspot-credentials.txt so an admin can print them.
-HOTSPOT_PASS="bridgebox"
-if [ -f /home/bridgebox/hotspot.conf ]; then
-    # shellcheck disable=SC1091
-    . /home/bridgebox/hotspot.conf
+# --- Hotspot: hostapd, NOT NetworkManager -------------------------------------
+# The guest hotspot is run by hostapd (bridge-box-hostapd.service) with a
+# dedicated dnsmasq for DHCP + captive DNS (bridge-box-apnet.service). We moved
+# off NetworkManager's built-in hotspot because NM's AP beacon (802.11n HT + WMM)
+# stops some budget clients — notably Amazon Fire tablets — from associating. A
+# stripped-down hostapd beacon fixes that (proven on-device). The SSID/password
+# derivation + hotspot-credentials.txt now live in bridge-box-hostapd.sh.
+#
+# For hostapd to own the AP radio, NetworkManager must LEAVE THAT INTERFACE
+# ALONE — but keep managing the CLIENT radio (it still brings up wifi.json). We
+# assert an NM "unmanaged" drop-in for the AP interface only.
+NM_UNMANAGED="/etc/NetworkManager/conf.d/90-bridgebox-unmanaged.conf"
+NEED_NM_RELOAD=0
+DESIRED_UNMANAGED="interface-name:$IFACE"
+if [ ! -f "$NM_UNMANAGED" ] || ! grep -q "$DESIRED_UNMANAGED" "$NM_UNMANAGED" 2>/dev/null; then
+    echo "Marking $IFACE unmanaged in NetworkManager (hostapd owns the AP radio)."
+    cat > "$NM_UNMANAGED" <<EOF
+# Managed by bridge-box-root.sh — the AP radio ($IFACE) is driven by hostapd,
+# not NetworkManager. The client radio stays NM-managed. Do not edit by hand.
+[keyfile]
+unmanaged-devices=$DESIRED_UNMANAGED
+EOF
+    NEED_NM_RELOAD=1
 fi
-CREDS_FILE="/home/bridgebox/hotspot-credentials.txt"
-{
-    echo "SSID: $HOTSPOT_SSID"
-    echo "Password: $HOTSPOT_PASS"
-} > "$CREDS_FILE"
-chown bridgebox:bridgebox "$CREDS_FILE" 2>/dev/null || true
-chmod 644 "$CREDS_FILE"
 
-# Bring the hotspot up, with retries. Don't let a single transient nmcli error
-# (e.g. "active connection disappeared" from the radio still settling) abort the
-# whole script — that used to fail the unit and, with restart-on-failure, spin.
-bring_up_hotspot() {
-    local attempt
-    for attempt in 1 2 3 4 5; do
-        # (Re)create only if it doesn't already exist / previous attempt failed.
-        if ! nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$CONNECTION_NAME"; then
-            nmcli device wifi hotspot ifname "$IFACE" con-name "$CONNECTION_NAME" \
-                ssid "$HOTSPOT_SSID" password "$HOTSPOT_PASS" 2>&1 || true
-            nmcli connection modify "$CONNECTION_NAME" ipv4.method shared \
-                connection.autoconnect yes connection.autoconnect-priority 100 2>&1 || true
-        fi
-        # Disable PMF (Protected Management Frames / 802.11w) on the hotspot.
-        # NetworkManager defaults AP-mode WPA to PMF "optional", which some
-        # clients — notably Amazon Fire tablets and other budget chipsets — fail
-        # to associate with. Forcing it off (802-11-wireless-security.pmf=1 =>
-        # "disable") makes the hotspot accept them. AP radio only — the client
-        # link is a separate connection and is untouched.
-        #
-        # Only modify (and only bounce the link) if it isn't already disabled, so
-        # a correctly-configured box doesn't needlessly cycle its hotspot on every
-        # boot. The guard also covers a hotspot left over from an older release
-        # (which would still have PMF optional): detect, set, re-activate once.
-        CUR_PMF=$(nmcli -g 802-11-wireless-security.pmf connection show "$CONNECTION_NAME" 2>/dev/null || echo "")
-        if [ "$CUR_PMF" != "1" ] && [ "$CUR_PMF" != "disable" ]; then
-            echo "Disabling PMF on hotspot (was '${CUR_PMF:-default}') for Fire-tablet compatibility."
-            nmcli connection modify "$CONNECTION_NAME" 802-11-wireless-security.pmf 1 2>&1 || true
-            # If it's already up, re-activate so the running AP picks up the change.
-            if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
-                nmcli connection up "$CONNECTION_NAME" 2>&1 || true
-            fi
-        fi
-        # Confirm it's actually active.
-        sleep 2
-        if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -q "^$CONNECTION_NAME:activated"; then
-            echo "Hotspot '$HOTSPOT_SSID' is active (attempt $attempt)."
-            return 0
-        fi
-        echo "Hotspot not active yet (attempt $attempt) — retrying..."
-        # Clear a half-made connection before the next attempt.
-        nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
-        sleep 3
-    done
-    echo "WARNING: could not bring hotspot up after retries."
-    return 1
-}
-bring_up_hotspot || true
+# If NM was still holding the AP interface (e.g. a leftover bridge-hotspot
+# connection from a pre-hostapd release, or first switch-over), release it so
+# hostapd can claim it. Non-fatal.
+if nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$CONNECTION_NAME"; then
+    echo "Removing legacy NM hotspot connection '$CONNECTION_NAME' (now handled by hostapd)."
+    nmcli connection down "$CONNECTION_NAME" 2>/dev/null || true
+    nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
+fi
+if [ "$NEED_NM_RELOAD" = "1" ]; then
+    nmcli connection reload 2>/dev/null || true
+    nmcli device set "$IFACE" managed no 2>/dev/null || true
+    sleep 2
+fi
 
-# Enable IP forwarding
+# Enable IP forwarding (NM's shared mode used to do this; we do it ourselves).
 sysctl -w net.ipv4.ip_forward=1
 grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-# Captive portal: hijack DNS on the hotspot to the box so guests land on the
-# app. This may cycle the hotspot connection to reload dnsmasq, so run it
-# BEFORE applying NAT (NAT is applied last to reflect the final link state).
-IFACE="$IFACE" HOTSPOT_CONNECTION="$CONNECTION_NAME" bash /home/bridgebox/bridge-box/bridge-box-captive.sh || \
-    echo "WARNING: captive portal setup failed — app still reachable by typing bridge.local."
+# Start (or restart) the AP services: hostapd first (the beacon), then apnet
+# (IP + DHCP + captive DNS). These are supervised units (Restart=on-failure), so
+# we just (re)start them here; systemd keeps them up thereafter. Non-fatal: if
+# the AP radio is briefly not ready, the units' own restart handles it.
+echo "Starting hostapd + AP network services..."
+# --no-block: this script runs as the bridge-box-root oneshot, which the AP
+# units are ordered After=; a blocking `systemctl restart` would deadlock (the
+# restart job can't complete until root finishes, and root waits on it). Queue
+# them instead — systemd starts/supervises them per their ordering. At boot the
+# units also start on their own (WantedBy=multi-user.target); this restart makes
+# a manual re-run of root.sh (e.g. after an interfaces.conf change) re-apply.
+systemctl restart --no-block bridge-box-hostapd.service 2>&1 || \
+    echo "WARNING: could not queue hostapd restart — check: journalctl -u bridge-box-hostapd"
+systemctl restart --no-block bridge-box-apnet.service 2>&1 || \
+    echo "WARNING: could not queue AP network restart — check: journalctl -u bridge-box-apnet"
 
 # NAT / port redirect (shared, idempotent script). Guest traffic on the AP
 # interface is redirected to the app; the client radio's traffic is untouched.
+# (Captive DNS is now handled inside bridge-box-apnet.sh's dnsmasq, so there is
+# no separate captive step here any more.)
 IFACE="$IFACE" APP_PORT="$APP_PORT" bash /home/bridgebox/bridge-box/bridge-box-nat.sh
 
 # Bring the client radio (CLIENT_IFACE) onto the wifi.json network and LEAVE IT
