@@ -1,23 +1,28 @@
 #!/bin/bash
 # BridgeBox AP-radio swap TEST (reversible).
 #
-# Purpose: test whether running the hotspot on the USB mt7601U radio (wlan1)
-# instead of the onboard Broadcom (wlan0) lets an Amazon Fire tablet associate.
-# The Broadcom AP refuses some clients (Fire tablets) at the 802.11 layer for
-# reasons no software setting we tried could shift; the mt7601U is a different
-# chipset/driver and may just work.
+# Purpose: run the hotspot on a USB WiFi adapter instead of the onboard Broadcom
+# (brcmfmac), because the Broadcom AP refuses some clients — notably Amazon Fire
+# tablets — at the 802.11 layer, for reasons no software setting we tried could
+# shift. The onboard radio then becomes the client/internet link.
 #
-# This is a TEST, not a committed change: it writes interfaces.conf with the
-# roles swapped and rebuilds the hotspot cleanly, OR rolls back to the default
-# (onboard = hotspot). It changes nothing else and is fully reversible.
+# IMPORTANT: the adapter used as the AP MUST support AP mode. The old Ralink
+# mt7601U does NOT ("Device supports neither AP nor Ad-Hoc mode") — that's a
+# dead end. A MediaTek mt7612u (driver mt76x2u) DOES and is the intended AP
+# adapter. This script verifies AP capability before switching, so it won't
+# leave you with a dead hotspot like a blind swap would.
 #
-#   sudo bash bridge-box-ap-swap-test.sh swap     # AP -> wlan1 (USB), client -> wlan0
-#   sudo bash bridge-box-ap-swap-test.sh restore  # back to AP -> wlan0, client -> wlan1
-#   sudo bash bridge-box-ap-swap-test.sh status   # show current roles + hotspot state
+# It identifies radios by DRIVER, not by fragile wlanN names (which shift when
+# USB adapters are added/removed), then picks the AP interface as follows:
+#   - prefers an AP-capable USB adapter (mt76x2u / mt7612u, etc.)
+#   - the onboard brcmfmac becomes the client link.
 #
-# After `swap`, try the Fire tablet. After testing, run `restore` to return to
-# the known-good default (or, if swap works and you want it permanent, we wire
-# it into provisioning properly — don't rely on this test script long-term).
+#   sudo bash bridge-box-ap-swap-test.sh status   # show radios, drivers, AP capability
+#   sudo bash bridge-box-ap-swap-test.sh swap     # AP -> USB adapter, client -> onboard
+#   sudo bash bridge-box-ap-swap-test.sh restore  # back to AP -> onboard (wlan0)
+#
+# After `swap`, try the Fire tablet. If it works and you want it permanent, we
+# wire it into provisioning properly — don't rely on this test script long-term.
 
 set -uo pipefail
 
@@ -33,6 +38,41 @@ fi
 
 ACTION="${1:-status}"
 
+# driver of a given wlan interface, e.g. brcmfmac / mt76x2u / mt7601u
+_drv() { basename "$(readlink -f "/sys/class/net/$1/device/driver" 2>/dev/null)" 2>/dev/null || echo "?"; }
+
+# Does this interface support AP mode? Parse `iw phy` for "AP" under supported
+# interface modes. Returns 0 (yes) / 1 (no).
+_supports_ap() {
+    local dev="$1" phy
+    phy="$(iw dev "$dev" info 2>/dev/null | awk '/wiphy/{print "phy"$2}')"
+    [ -n "$phy" ] || return 1
+    iw phy "$phy" info 2>/dev/null | awk '/Supported interface modes/{f=1;next} f&&/\* AP$/{print;exit}' | grep -q AP
+}
+
+# List wlan interfaces present.
+_wlans() { for d in /sys/class/net/wlan*; do [ -e "$d" ] && basename "$d"; done; }
+
+# Pick the best AP interface: first USB adapter (non-brcmfmac) that supports AP.
+_pick_ap_iface() {
+    local d drv
+    for d in $(_wlans); do
+        drv="$(_drv "$d")"
+        [ "$drv" = "brcmfmac" ] && continue      # onboard = client, skip
+        if _supports_ap "$d"; then echo "$d"; return 0; fi
+    done
+    return 1
+}
+
+# Pick the onboard (brcmfmac) interface for the client link.
+_pick_onboard() {
+    local d
+    for d in $(_wlans); do
+        [ "$(_drv "$d")" = "brcmfmac" ] && echo "$d" && return 0
+    done
+    return 1
+}
+
 show_status() {
     echo "=== Current interface roles ==="
     if [ -f "$IFACES_CONF" ]; then
@@ -41,15 +81,10 @@ show_status() {
         echo "interfaces.conf: (absent — defaults AP=wlan0, CLIENT=wlan1)"
     fi
     echo
-    echo "Radios present:"
-    for w in wlan0 wlan1; do
-        if [ -e "/sys/class/net/$w" ]; then
-            drv=$(basename "$(readlink -f "/sys/class/net/$w/device/driver" 2>/dev/null)" 2>/dev/null || echo "?")
-            typ=$(iw dev "$w" info 2>/dev/null | awk '/type/{print $2}')
-            echo "  $w: driver=$drv type=${typ:-unknown}"
-        else
-            echo "  $w: NOT present"
-        fi
+    echo "Radios present (driver + AP capability):"
+    for w in $(_wlans); do
+        if _supports_ap "$w"; then ap="AP-capable: YES"; else ap="AP-capable: NO"; fi
+        printf '  %-7s driver=%-10s %s\n' "$w" "$(_drv "$w")" "$ap"
     done
     echo
     echo "Hotspot connection state:"
@@ -57,9 +92,7 @@ show_status() {
         || echo "  $CONNECTION_NAME not active"
 }
 
-# Tear down the current hotspot connection so a fresh one is built on the new
-# interface (the earlier "Pi got confused" was this step being skipped — the old
-# connection stayed pinned to the old radio).
+# Tear down the current hotspot cleanly, write interfaces.conf, rebuild via root.sh.
 rebuild() {
     local ap_iface="$1" client_iface="$2"
     echo "Setting roles: AP=$ap_iface  CLIENT=$client_iface"
@@ -73,12 +106,9 @@ EOF
     echo "Tearing down any existing hotspot + stale radio connections..."
     nmcli connection down "$CONNECTION_NAME" 2>/dev/null || true
     nmcli connection delete "$CONNECTION_NAME" 2>/dev/null || true
-    # Also drop any auto client profile so the client radio re-attaches on the
-    # right interface when root.sh re-runs.
     nmcli device disconnect "$ap_iface" 2>/dev/null || true
 
     echo "Re-running bridge-box-root.sh to rebuild hotspot on $ap_iface + client on $client_iface..."
-    # root.sh reads interfaces.conf we just wrote and does hotspot+captive+NAT+client.
     bash "$BOX_DIR/bridge-box-root.sh" || echo "WARNING: root.sh returned non-zero (check output above)."
 
     echo
@@ -89,15 +119,25 @@ EOF
 
 case "$ACTION" in
     swap)
-        echo "### SWAP: hotspot -> wlan1 (USB mt7601U), client link -> wlan0 (onboard)"
-        if [ ! -e /sys/class/net/wlan1 ]; then
-            echo "ERROR: wlan1 (USB adapter) not present — can't put the AP there."
+        echo "### SWAP: hotspot -> AP-capable USB adapter, client link -> onboard Broadcom"
+        AP_IF="$(_pick_ap_iface || true)"
+        ONBOARD="$(_pick_onboard || true)"
+        if [ -z "$AP_IF" ]; then
+            echo "ERROR: no AP-capable USB adapter found."
+            echo "       Plug in the MediaTek mt7612u adapter and check: sudo bash $0 status"
+            echo "       (The old mt7601U does NOT support AP mode and cannot be the hotspot.)"
             exit 1
         fi
-        rebuild "wlan1" "wlan0"
+        if [ -z "$ONBOARD" ]; then
+            echo "WARNING: onboard brcmfmac not found; using the AP adapter for the hotspot and"
+            echo "         leaving the client link to whatever remains."
+            ONBOARD="wlan0"
+        fi
+        echo "Chosen: AP=$AP_IF (driver $(_drv "$AP_IF")), CLIENT=$ONBOARD (driver $(_drv "$ONBOARD"))"
+        rebuild "$AP_IF" "$ONBOARD"
         ;;
     restore)
-        echo "### RESTORE: default roles — hotspot -> wlan0 (onboard), client -> wlan1 (USB)"
+        echo "### RESTORE: default roles — hotspot -> wlan0 (onboard), client -> wlan1"
         rebuild "wlan0" "wlan1"
         echo "(interfaces.conf now pins the defaults explicitly; delete it if you prefer the implicit default.)"
         ;;
