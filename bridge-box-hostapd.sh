@@ -82,6 +82,16 @@ mkdir -p "$(dirname "$CONF_OUT")"
     echo "wpa_key_mgmt=WPA-PSK"
     echo "rsn_pairwise=CCMP"
     echo "ieee80211w=0"
+    # Slow-client handshake tolerance. A 2019 Fire 7's WiFi stack is slow to
+    # reply in the WPA2 4-way handshake: hostapd's default EAPOL retransmit
+    # count (and ~1s timeout) can fire before the tablet answers msg 2/4, so a
+    # late/retransmitted M2 lands "in invalid state" and the association is torn
+    # down in a connect/disconnect loop (see hostapd log: "received EAPOL-Key
+    # msg 2/4 in invalid state ... invalid MIC"). Raising the handshake message
+    # retransmit counts gives slow clients more chances to complete it. This is
+    # the documented remedy for cheap/slow clients and does not affect fast ones.
+    echo "wpa_pairwise_update_count=10"
+    echo "wpa_group_update_count=10"
     echo "wpa_passphrase=$HOTSPOT_PASS"
     [ -n "$HOTSPOT_COUNTRY" ] && echo "country_code=$HOTSPOT_COUNTRY"
 } > "$CONF_OUT"
